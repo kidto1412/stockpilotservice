@@ -61,41 +61,69 @@ enum ShiftStatus {
 //
 
 model User {
-  id        String   @id @default(uuid())
-  fullName  String
-  username  String   @unique
-  password  String
-  email     String?  @unique
-  phone     String?
-  role      UserRole @default(CASHIER)
+  id       String   @id @default(uuid())
+  fullName String
+  username String   @unique
+  password String
+  email    String?  @unique
+  phone    String?
+  role     UserRole @default(CASHIER)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relasi
-  stores       Store[] // satu user bisa punya banyak store
+  // Relasi ke Store jika sebagai KARYAWAN
+  storeId String?
+  store   Store?  @relation("StoreEmployees", fields: [storeId], references: [id])
+
+  // Relasi ke Store jika sebagai OWNER
+  ownedStores Store[] @relation("StoreOwner")
+
   shifts       Shift[]
   transactions Transaction[]
+  branch       Branch?       @relation(fields: [branchId], references: [id])
+  branchId     String?
 }
 
 model Store {
-  id        String   @id @default(uuid())
-  code      String   @unique
-  name      String
-  address   String?
-  logoUrl   String?
-  currency  String   @default("IDR")
-  ownerId   String
-  owner     User     @relation(fields: [ownerId], references: [id])
+  id       String  @id @default(uuid())
+  code     String  @unique
+  name     String
+  address  String?
+  logoUrl  String?
+  currency String  @default("IDR")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  categories     Category[]
-  products       Product[]
-  customers      Customer[]
-  shifts         Shift[]
-  transactions   Transaction[]
-  businessTypeId String? // Relasi ke jenis usaha
+  // OWNER
+  ownerId String
+  owner   User   @relation("StoreOwner", fields: [ownerId], references: [id])
+
+  // Karyawan
+  employees User[] @relation("StoreEmployees")
+
+  categories   Category[]
+  products     Product[]
+  customers    Customer[]
+  shifts       Shift[]
+  transactions Transaction[]
+
+  businessTypeId String?
   businessType   BusinessType? @relation(fields: [businessTypeId], references: [id])
+  branches       Branch[]
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[] // karyawan yang ditempatkan di cabang ini
 }
 
 model BusinessType {
