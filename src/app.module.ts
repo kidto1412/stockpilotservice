@@ -7,9 +7,10 @@ import { PrismaService } from './prisma/prisma.service';
 import { StoreModule } from './store/store.module';
 import { LoggerMiddleware } from './common/middlewares/logger.middleware';
 import { AuthModule } from './auth/auth.module';
+import { LocationModule } from './location/location.module';
 
 @Module({
-  imports: [PrismaModule, UsersModule, StoreModule, AuthModule],
+  imports: [PrismaModule, UsersModule, StoreModule, AuthModule, LocationModule],
   controllers: [AppController],
   providers: [AppService],
 })
