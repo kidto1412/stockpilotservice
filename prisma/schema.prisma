@@ -94,11 +94,13 @@ model Staff {
 }
 
 model Store {
-  id      String @id @default(uuid())
-  code    String @unique
-  name    String
-  ownerId String @unique // <--- Tambahkan @unique disini
-  owner   User   @relation(fields: [ownerId], references: [id])
+  id       String @id @default(uuid())
+  code     String @unique
+  name     String
+  ownerId  String @unique // <--- Tambahkan @unique disini
+  province String
+  regency  String
+  owner    User   @relation(fields: [ownerId], references: [id])
 
   staffs         Staff[]
   // branches       Branch[]
