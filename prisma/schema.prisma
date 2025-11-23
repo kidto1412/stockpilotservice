@@ -79,6 +79,7 @@ model User {
 
 model Store {
   id        String   @id @default(uuid())
+  code      String   @unique
   name      String
   address   String?
   logoUrl   String?
@@ -88,11 +89,23 @@ model Store {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  categories   Category[]
-  products     Product[]
-  customers    Customer[]
-  shifts       Shift[]
-  transactions Transaction[]
+  categories     Category[]
+  products       Product[]
+  customers      Customer[]
+  shifts         Shift[]
+  transactions   Transaction[]
+  businessTypeId String? // Relasi ke jenis usaha
+  businessType   BusinessType? @relation(fields: [businessTypeId], references: [id])
+}
+
+model BusinessType {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  // description String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores Store[] // Relasi ke store
 }
 
 model Category {

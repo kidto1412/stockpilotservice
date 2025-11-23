@@ -7,9 +7,25 @@ import { baseResponse, paginateResponse } from 'src/utils/response.util';
 export class StoreService {
   constructor(private prisma: PrismaService) {}
 
+  private async generateStoreCode(): Promise<string> {
+    const lastStore = await this.prisma.store.findFirst({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let lastNumber = 0;
+    if (lastStore?.code) {
+      const match = lastStore.code.match(/(\d+)$/);
+      if (match) lastNumber = parseInt(match[1], 10);
+    }
+
+    const newNumber = lastNumber + 1;
+    return `STORE-${newNumber.toString().padStart(5, '0')}`;
+  }
+
   async create(data: CreateStoreDto) {
+    const code = await this.generateStoreCode();
     return this.prisma.store.create({
-      data: { ...data },
+      data: { ...data, code },
     });
   }
   async findAll() {
