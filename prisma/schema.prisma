@@ -61,70 +61,70 @@ enum ShiftStatus {
 //
 
 model User {
-  id       String   @id @default(uuid())
-  fullName String
-  username String   @unique
-  password String
-  email    String?  @unique
-  phone    String?
-  role     UserRole @default(CASHIER)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relasi ke Store jika sebagai KARYAWAN
-  storeId String?
-  store   Store?  @relation("StoreEmployees", fields: [storeId], references: [id])
-
-  // Relasi ke Store jika sebagai OWNER
-  ownedStores Store[] @relation("StoreOwner")
-
-  shifts       Shift[]
-  transactions Transaction[]
-  branch       Branch?       @relation(fields: [branchId], references: [id])
-  branchId     String?
-}
-
-model Store {
-  id       String  @id @default(uuid())
-  code     String  @unique
-  name     String
-  address  String?
-  logoUrl  String?
-  currency String  @default("IDR")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // OWNER
-  ownerId String
-  owner   User   @relation("StoreOwner", fields: [ownerId], references: [id])
-
-  // Karyawan
-  employees User[] @relation("StoreEmployees")
-
-  categories   Category[]
-  products     Product[]
-  customers    Customer[]
-  shifts       Shift[]
-  transactions Transaction[]
-
-  businessTypeId String?
-  businessType   BusinessType? @relation(fields: [businessTypeId], references: [id])
-  branches       Branch[]
-}
-
-model Branch {
   id        String   @id @default(uuid())
-  name      String
-  address   String?
+  fullName  String
+  username  String   @unique
+  password  String
+  email     String?  @unique
+  phone     String?
+  role      UserRole @default(OWNER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store        Store?
+  // branch       Branch?       @relation(fields: [branchId], references: [id])
+  branchId     String?
+  transactions Transaction[]
+  shifts       Shift[]
+}
+
+model Staff {
+  id        String   @id @default(uuid())
+  fullName  String
+  username  String   @unique
+  password  String
+  role      UserRole @default(CASHIER)
   storeId   String
   store     Store    @relation(fields: [storeId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users User[] // karyawan yang ditempatkan di cabang ini
+  shifts       Shift[]
+  transactions Transaction[]
 }
+
+model Store {
+  id      String @id @default(uuid())
+  code    String @unique
+  name    String
+  ownerId String @unique // <--- Tambahkan @unique disini
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  staffs         Staff[]
+  // branches       Branch[]
+  businessType   BusinessType? @relation(fields: [businessTypeId], references: [id])
+  businessTypeId String?
+  categories     Category[]
+  products       Product[]
+  transactions   Transaction[]
+  customers      Customer[]
+  shifts         Shift[]
+
+  createdAt DateTime @default(now()) // <-- Tambahkan ini
+  updatedAt DateTime @updatedAt // <-- Tambahkan ini
+}
+
+// model Branch {
+//   id        String   @id @default(uuid())
+//   name      String
+//   address   String?
+//   storeId   String
+//   store     Store    @relation(fields: [storeId], references: [id])
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+
+//   users User[] // karyawan yang ditempatkan di cabang ini
+// }
 
 model BusinessType {
   id        String   @id @default(uuid())
@@ -190,6 +190,8 @@ model Transaction {
   updatedAt     DateTime          @updatedAt
 
   transactionItems TransactionItem[]
+  staff            Staff?            @relation(fields: [staffId], references: [id])
+  staffId          String?
 }
 
 model TransactionItem {
@@ -239,6 +241,8 @@ model Shift {
   status         ShiftStatus @default(OPEN)
   openingBalance Float       @default(0)
   closingBalance Float?
+  staff          Staff?      @relation(fields: [staffId], references: [id])
+  staffId        String?
 }
 
 model SyncLog {
