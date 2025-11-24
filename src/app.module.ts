@@ -8,9 +8,10 @@ import { StoreModule } from './store/store.module';
 import { LoggerMiddleware } from './common/middlewares/logger.middleware';
 import { AuthModule } from './auth/auth.module';
 import { LocationModule } from './location/location.module';
+import { BusinessTypeModule } from './business-type/business-type.module';
 
 @Module({
-  imports: [PrismaModule, UsersModule, StoreModule, AuthModule, LocationModule],
+  imports: [PrismaModule, UsersModule, StoreModule, AuthModule, LocationModule, BusinessTypeModule],
   controllers: [AppController],
   providers: [AppService],
 })

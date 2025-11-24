@@ -15,6 +15,14 @@ export class CreateStoreDto {
   @IsString()
   address: string;
 
+  @IsNotEmpty()
+  @IsString()
+  province: string;
+
+  @IsNotEmpty()
+  @IsString()
+  regency: string;
+
   @IsOptional()
   @IsString()
   logoUrl: string;
