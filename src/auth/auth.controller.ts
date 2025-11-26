@@ -16,8 +16,7 @@ export class AuthController {
   }
   @Post('register')
   async register(@Body() dto: CreateUserDto) {
-    await this.authService.register(dto);
-    return CREATED;
+    return this.authService.register(dto);
   }
 
   @UseGuards(JwtAuthGuard)

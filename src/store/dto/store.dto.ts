@@ -23,6 +23,10 @@ export class CreateStoreDto {
   @IsString()
   regency: string;
 
+  @IsNotEmpty()
+  @IsString()
+  businessTypeId: string;
+
   @IsOptional()
   @IsString()
   logoUrl: string;

@@ -5,7 +5,7 @@ import { baseResponse } from 'src/utils/response.util';
 @Injectable()
 export class BusinessTypeService {
   constructor(private prisma: PrismaService) {}
-  async getProvince() {
+  async getBusinessType() {
     const province = await this.prisma.businessType.findMany();
     return baseResponse(province);
   }

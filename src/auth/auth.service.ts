@@ -30,10 +30,6 @@ export class AuthService {
       email: user.email,
       role: user.role,
     });
-
-    return {
-      access_token: token,
-    };
   }
 
   async register(data: CreateUserDto) {
@@ -44,8 +40,20 @@ export class AuthService {
       throw new BadRequestException('Email atau username sudah dipakai');
     const hashed = await bcrypt.hash(data.password, this.SALT_ROUNDS);
 
-    return this.prisma.user.create({
+    await this.prisma.user.create({
       data: { ...data, password: hashed, role: 'OWNER' },
     });
+
+    const user = await this.usersService.findByUsername(data.username);
+
+    const token = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
+    return {
+      userId: user.id,
+      access_token: token,
+    };
   }
 }

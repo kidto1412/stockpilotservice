@@ -111,6 +111,8 @@ model Store {
   transactions   Transaction[]
   customers      Customer[]
   shifts         Shift[]
+  address        String
+  logoUrl        String?
 
   createdAt DateTime @default(now()) // <-- Tambahkan ini
   updatedAt DateTime @updatedAt // <-- Tambahkan ini

@@ -1,4 +1,11 @@
-import { Controller } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
+import { BusinessTypeService } from './business-type.service';
 
 @Controller('business-type')
-export class BusinessTypeController {}
+export class BusinessTypeController {
+  constructor(private readonly businessTypeService: BusinessTypeService) {}
+  @Get()
+  findAll() {
+    return this.businessTypeService.getBusinessType();
+  }
+}
