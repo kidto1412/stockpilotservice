@@ -80,6 +80,7 @@ model User {
 
 model Staff {
   id        String   @id @default(uuid())
+  email     String   @unique
   fullName  String
   username  String   @unique
   password  String
@@ -114,8 +115,34 @@ model Store {
   address        String
   logoUrl        String?
 
-  createdAt DateTime @default(now()) // <-- Tambahkan ini
-  updatedAt DateTime @updatedAt // <-- Tambahkan ini
+  createdAt DateTime   @default(now()) // <-- Tambahkan ini
+  updatedAt DateTime   @updatedAt // <-- Tambahkan ini
+  discounts Discount[]
+}
+
+model ProductPointRule {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  points    Int // jumlah poin yang diberikan per 1 item
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  histories CustomerPointHistory[]
+}
+
+model CustomerPointHistory {
+  id                 String            @id @default(uuid())
+  customerId         String
+  customer           Customer          @relation(fields: [customerId], references: [id])
+  transactionId      String?
+  transaction        Transaction?      @relation(fields: [transactionId], references: [id])
+  productId          String?
+  product            Product?          @relation(fields: [productId], references: [id])
+  points             Int
+  createdAt          DateTime          @default(now())
+  productPointRule   ProductPointRule? @relation(fields: [productPointRuleId], references: [id])
+  productPointRuleId String?
 }
 
 // model Branch {
@@ -172,6 +199,47 @@ model Product {
 
   transactionItems TransactionItem[]
   stockMovements   StockMovement[]
+
+  productPointRules      ProductPointRule[]
+  customerPointHistories CustomerPointHistory[]
+  productDiscounts       ProductDiscount[]
+}
+
+enum DiscountType {
+  PRODUCT
+  TRANSACTION
+  QUANTITY
+}
+
+enum DiscountValueType {
+  PERCENT // contoh 10%
+  AMOUNT // contoh 5000
+}
+
+model Discount {
+  id          String            @id @default(uuid())
+  name        String
+  description String?
+  storeId     String
+  store       Store             @relation(fields: [storeId], references: [id])
+  type        DiscountType // PRODUCT | TRANSACTION | QUANTITY
+  valueType   DiscountValueType // PERCENT | AMOUNT
+  value       Float // 10 berarti 10% atau 10.000 tergantung tipe
+  minQty      Int? // hanya untuk QUANTITY
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  productRelations ProductDiscount[] // relasi ke produk
+  transactionItems TransactionItem[] // relasi ketika dipakai di transaksi
+  transactions     Transaction[]
+}
+
+model ProductDiscount {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  discountId String
+  discount   Discount @relation(fields: [discountId], references: [id])
 }
 
 model Transaction {
@@ -193,9 +261,12 @@ model Transaction {
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
-  transactionItems TransactionItem[]
-  staff            Staff?            @relation(fields: [staffId], references: [id])
-  staffId          String?
+  transactionItems       TransactionItem[]
+  staff                  Staff?                 @relation(fields: [staffId], references: [id])
+  staffId                String?
+  customerPointHistories CustomerPointHistory[]
+  transactionDiscountId  String?
+  transactionDiscount    Discount?              @relation(fields: [transactionDiscountId], references: [id])
 }
 
 model TransactionItem {
@@ -207,6 +278,8 @@ model TransactionItem {
   quantity      Int
   price         Float
   subtotal      Float
+  discountId    String?
+  discount      Discount?   @relation(fields: [discountId], references: [id])
 }
 
 model StockMovement {
@@ -231,7 +304,8 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  transactions Transaction[]
+  transactions           Transaction[]
+  customerPointHistories CustomerPointHistory[]
 }
 
 model Shift {

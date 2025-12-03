@@ -7,6 +7,7 @@ import {
   Post,
   Put,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
@@ -15,14 +16,17 @@ import {
   DELETED,
   UPDATED,
 } from 'src/common/constant/operations.constant';
+import { StoreId } from 'src/common/decorators/user.decorator';
+import { AuthGuard } from '@nestjs/passport';
 
+@UseGuards(AuthGuard('jwt'))
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  async created(@Body() dto: CreateUserDto) {
-    await this.usersService.create(dto);
+  async created(@Body() dto: CreateUserDto, @StoreId() storeId: string) {
+    await this.usersService.create(dto, storeId);
     return CREATED;
   }
 

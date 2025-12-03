@@ -9,14 +9,30 @@ import { LoggerMiddleware } from './common/middlewares/logger.middleware';
 import { AuthModule } from './auth/auth.module';
 import { LocationModule } from './location/location.module';
 import { BusinessTypeModule } from './business-type/business-type.module';
+import { JwtModule } from '@nestjs/jwt';
+import { AuthContextMiddleware } from './common/middlewares/auth-context.middleware';
 
 @Module({
-  imports: [PrismaModule, UsersModule, StoreModule, AuthModule, LocationModule, BusinessTypeModule],
+  imports: [
+    JwtModule.register({
+      secret: process.env.JWT_SECRET,
+    }),
+
+    PrismaModule,
+    UsersModule,
+    StoreModule,
+    AuthModule,
+    LocationModule,
+    BusinessTypeModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('*'); // log semua route
+    consumer
+      .apply(AuthContextMiddleware)
+      .exclude('auth/login', 'auth/register')
+      .forRoutes('*');
   }
 }

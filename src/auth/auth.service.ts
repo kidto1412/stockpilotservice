@@ -19,7 +19,8 @@ export class AuthService {
   ) {}
 
   async login(username: string, password: string) {
-    const user = await this.usersService.findByUsername(username);
+    const user = await this.usersService.findOwnerByUsername(username);
+    console.log(user);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const match = await bcrypt.compare(password, user.password);
@@ -29,7 +30,13 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      storeId: user.store.id,
     });
+    console.log(token);
+    console.log(user);
+    return {
+      token,
+    };
   }
 
   async register(data: CreateUserDto) {
@@ -50,6 +57,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      storeId: user.store.id,
     });
     return {
       userId: user.id,
