@@ -51,17 +51,17 @@ export class AuthService {
       data: { ...data, password: hashed, role: 'OWNER' },
     });
 
-    const user = await this.usersService.findByUsername(data.username);
+    const user = await this.usersService.findOwnerByUsername(data.username);
 
     const token = this.jwtService.sign({
       sub: user.id,
       email: user.email,
       role: user.role,
-      storeId: user.store.id,
+      storeId: user.store?.id ?? null,
     });
     return {
       userId: user.id,
-      access_token: token,
+      token: token,
     };
   }
 }

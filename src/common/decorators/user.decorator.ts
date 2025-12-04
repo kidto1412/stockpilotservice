@@ -23,3 +23,10 @@ export const StoreId = createParamDecorator((_, ctx: ExecutionContext) => {
 
   return req.user.storeId;
 });
+
+export const CurrentUser = createParamDecorator(
+  (data, ctx: ExecutionContext) => {
+    const req = ctx.switchToHttp().getRequest();
+    return req.user;
+  },
+);

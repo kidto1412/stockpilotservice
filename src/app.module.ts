@@ -11,6 +11,13 @@ import { LocationModule } from './location/location.module';
 import { BusinessTypeModule } from './business-type/business-type.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthContextMiddleware } from './common/middlewares/auth-context.middleware';
+import { AuthGuard } from '@nestjs/passport';
+import { APP_GUARD } from '@nestjs/core';
+import { StaffService } from './staff/staff.service';
+import { StaffController } from './staff/staff.controller';
+import { StaffModule } from './staff/staff.module';
+import { JwtAuthGuard } from './utils/jwt-auth-guard.util';
+import { CategoryModule } from './category/category.module';
 
 @Module({
   imports: [
@@ -24,9 +31,18 @@ import { AuthContextMiddleware } from './common/middlewares/auth-context.middlew
     AuthModule,
     LocationModule,
     BusinessTypeModule,
+    StaffModule,
+    CategoryModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [AppController, StaffController],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    StaffService,
+  ],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {

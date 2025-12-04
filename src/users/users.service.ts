@@ -35,8 +35,21 @@ export class UsersService {
     const users = this.prisma.staff.findMany();
     return baseResponse(users);
   }
-  async findOne(id: string) {
+  async findAllStaff(storeId: string) {
+    const users = this.prisma.staff.findMany({
+      where: { storeId },
+    });
+    return baseResponse(users);
+  }
+  async findOwner(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+    const { password, id: _removedId, ...safeUser } = user;
+
+    return safeUser;
+  }
+  async findStaff(id: string) {
+    const user = await this.prisma.staff.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     return user;
   }
@@ -78,6 +91,22 @@ export class UsersService {
 
     const [data, total] = await Promise.all([
       this.prisma.staff.findMany({
+        skip,
+        take: size,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.staff.count(),
+    ]);
+
+    return paginateResponse(data, page, size, total);
+  }
+
+  async findAllStaffPagination(page: number, size: number, storeId: string) {
+    const skip = (page - 1) * size;
+
+    const [data, total] = await Promise.all([
+      this.prisma.staff.findMany({
+        where: { storeId },
         skip,
         take: size,
         orderBy: { createdAt: 'desc' },

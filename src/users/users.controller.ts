@@ -7,6 +7,7 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
@@ -19,7 +20,6 @@ import {
 import { StoreId } from 'src/common/decorators/user.decorator';
 import { AuthGuard } from '@nestjs/passport';
 
-@UseGuards(AuthGuard('jwt'))
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -35,6 +35,25 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
+  @Get('/staff')
+  findAllStaff(@Req() req) {
+    return this.usersService.findAllStaff(req.user.storeId);
+  }
+  @Get('/staff/pagination')
+  findAllStaffPagination(
+    @Query('page') page = 1,
+    @Query('size') size = 10,
+    @Req() req,
+  ) {
+    const pageNumber = Math.max(1, Number(page));
+    const pageSize = Math.max(1, Number(size));
+    return this.usersService.findAllStaffPagination(
+      pageNumber,
+      pageSize,
+      req.user.storeId,
+    );
+  }
+
   @Get('pagination')
   async getPagination(@Query('page') page = 1, @Query('size') size = 10) {
     const pageNumber = Math.max(1, Number(page));
@@ -43,9 +62,15 @@ export class UsersController {
     return this.usersService.getPagination(pageNumber, pageSize);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+  @Get('/profile/owner')
+  profileOwner(@Req() req) {
+    console.log(req, 'req');
+    return this.usersService.findOwner(req.user.sub);
+  }
+
+  @Get('/profile/staff')
+  profileStaff(@Req() req) {
+    return this.usersService.findStaff(req.user);
   }
 
   @Put(':id')

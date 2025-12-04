@@ -5,15 +5,17 @@ import { JwtAuthGuard } from 'src/utils/jwt-auth-guard.util';
 
 import { CREATED } from 'src/common/constant/operations.constant';
 import { CreateUserDto } from 'src/users/dto/user.dto';
+import { Public } from 'src/common/decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
-
+  @Public()
   @Post('login')
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto.username, dto.password);
   }
+  @Public()
   @Post('register')
   async register(@Body() dto: CreateUserDto) {
     return this.authService.register(dto);

@@ -79,17 +79,17 @@ model User {
 }
 
 model Staff {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  fullName  String
-  username  String   @unique
-  password  String
-  role      UserRole @default(CASHIER)
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id           String        @id @default(uuid())
+  email        String        @unique
+  fullName     String
+  username     String        @unique
+  password     String
+  role         UserRole      @default(CASHIER)
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id])
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  phone        String
   shifts       Shift[]
   transactions Transaction[]
 }
@@ -170,8 +170,6 @@ model BusinessType {
 model Category {
   id        String   @id @default(uuid())
   name      String
-  color     String?
-  icon      String?
   storeId   String
   store     Store    @relation(fields: [storeId], references: [id])
   createdAt DateTime @default(now())
