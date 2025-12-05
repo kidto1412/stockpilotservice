@@ -2,10 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateStoreDto, UpdateStoreDto } from './dto/store.dto';
 import { baseResponse, paginateResponse } from 'src/utils/response.util';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class StoreService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+  ) {}
 
   private async generateStoreCode(): Promise<string> {
     const lastStore = await this.prisma.store.findFirst({
@@ -24,9 +28,22 @@ export class StoreService {
 
   async create(data: CreateStoreDto) {
     const code = await this.generateStoreCode();
-    return this.prisma.store.create({
+    const store = await this.prisma.store.create({
       data: { ...data, code },
     });
+    // 2. Update user to have this storeId
+    const owner = await this.prisma.user.findUnique({
+      where: { id: data.ownerId },
+    });
+    const token = this.jwtService.sign({
+      sub: owner.id,
+      email: owner.email,
+      role: owner.role,
+      storeId: store.id,
+    });
+    return {
+      token: token,
+    };
   }
   async findAll() {
     const stores = this.prisma.store.findMany();

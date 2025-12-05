@@ -41,8 +41,7 @@ export class StoreController {
       dto.logoUrl = savedFile.url;
     }
 
-    await this.storeService.create(dto);
-    return CREATED;
+    return this.storeService.create(dto);
   }
 
   @Get()

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreateCategoryDTO, UpdateCategoryDTO } from './dto/category.dto';
+import { CreateCategoryDTO } from './dto/category.dto';
 import { baseResponse, paginateResponse } from 'src/utils/response.util';
 
 @Injectable()
@@ -24,7 +24,9 @@ export class CategoryService {
         take: size,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.category.count(),
+      this.prisma.category.count({
+        where: { storeId },
+      }),
     ]);
 
     return paginateResponse(data, page, size, total);
@@ -40,7 +42,7 @@ export class CategoryService {
     });
   }
 
-  async update(id: string, data: UpdateCategoryDTO) {
+  async update(id: string, data: CreateCategoryDTO) {
     return this.prisma.category.update({
       where: {
         id,

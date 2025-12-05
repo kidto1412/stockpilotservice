@@ -18,6 +18,9 @@ import { StaffController } from './staff/staff.controller';
 import { StaffModule } from './staff/staff.module';
 import { JwtAuthGuard } from './utils/jwt-auth-guard.util';
 import { CategoryModule } from './category/category.module';
+import { ProductService } from './product/product.service';
+import { ProductController } from './product/product.controller';
+import { ProductModule } from './product/product.module';
 
 @Module({
   imports: [
@@ -33,8 +36,9 @@ import { CategoryModule } from './category/category.module';
     BusinessTypeModule,
     StaffModule,
     CategoryModule,
+    ProductModule,
   ],
-  controllers: [AppController, StaffController],
+  controllers: [AppController, StaffController, ProductController],
   providers: [
     AppService,
     {
@@ -42,6 +46,7 @@ import { CategoryModule } from './category/category.module';
       useClass: JwtAuthGuard,
     },
     StaffService,
+    ProductService,
   ],
 })
 export class AppModule {

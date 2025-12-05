@@ -10,7 +10,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { CategoryService } from './category.service';
-import { CreateCategoryDTO, UpdateCategoryDTO } from './dto/category.dto';
+import { CreateCategoryDTO } from './dto/category.dto';
 import { StoreId } from 'src/common/decorators/user.decorator';
 import {
   CREATED,
@@ -49,7 +49,7 @@ export class CategoryController {
   }
 
   @Put(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateCategoryDTO) {
+  async update(@Param('id') id: string, @Body() dto: CreateCategoryDTO) {
     await this.categoryService.update(id, dto);
     return UPDATED;
   }
