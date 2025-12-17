@@ -21,6 +21,7 @@ import { CategoryModule } from './category/category.module';
 import { ProductService } from './product/product.service';
 import { ProductController } from './product/product.controller';
 import { ProductModule } from './product/product.module';
+import { DiscountModule } from './discount/discount.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { ProductModule } from './product/product.module';
     StaffModule,
     CategoryModule,
     ProductModule,
+    DiscountModule,
   ],
   controllers: [AppController, StaffController, ProductController],
   providers: [
