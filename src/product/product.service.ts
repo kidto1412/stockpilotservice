@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
+import { paginateResponse } from 'src/utils/response.util';
+import { generateBarcode } from 'src/utils/generatebarcode';
 
 @Injectable()
 export class ProductService {
@@ -15,9 +17,15 @@ export class ProductService {
     imageUrl: string | undefined,
     storeId: string,
   ) {
+    let barcode = dto.barcode?.trim();
+
+    if (!barcode) {
+      barcode = await generateBarcode(this.prisma, storeId);
+    }
     return this.prisma.product.create({
       data: {
         ...dto,
+        barcode,
         imageUrl,
         storeId, // ambil dari token
       },
@@ -39,15 +47,7 @@ export class ProductService {
       }),
     ]);
 
-    return {
-      data,
-      page,
-      size,
-      total,
-      totalPages: Math.ceil(total / size),
-      hasNext: page * size < total,
-      hasPrev: page > 1,
-    };
+    return paginateResponse(data, page, size, total);
   }
 
   async findAll(storeId: string) {

@@ -16,6 +16,7 @@ import { UploadInterceptor } from 'src/common/interceptors/upload.interceptor';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { saveUploadedFile } from 'src/utils/upload-file.util';
 import { StoreId } from 'src/common/decorators/user.decorator';
+import { CREATED } from 'src/common/constant/operations.constant';
 
 @Controller('product')
 export class ProductController {
@@ -36,7 +37,8 @@ export class ProductController {
     }
 
     // storeId dari token, bukan dari body
-    return this.productService.create(dto, imageUrl, storeId);
+    await this.productService.create(dto, imageUrl, storeId);
+    return CREATED;
   }
 
   @Get('/pagination')
