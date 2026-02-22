@@ -6,16 +6,13 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDiscountDto, UpdateDiscountDto } from './dto/dicount.dto';
+import { paginateResponse } from 'src/utils/response.util';
 
 @Injectable()
 export class DiscountService {
   constructor(private prisma: PrismaService) {}
 
   async create(dto: CreateDiscountDto, storeId: string) {
-    if (dto.type === 'QUANTITY' && !dto.minQty) {
-      throw new BadRequestException('minQty required for QUANTITY discount');
-    }
-
     return this.prisma.discount.create({
       data: {
         ...dto,
@@ -46,10 +43,6 @@ export class DiscountService {
   async update(id: string, dto: UpdateDiscountDto, storeId: string) {
     await this.findOne(id, storeId);
 
-    if (dto.type === 'QUANTITY' && !dto.minQty) {
-      throw new BadRequestException('minQty required for QUANTITY discount');
-    }
-
     return this.prisma.discount.update({
       where: { id },
       data: dto,
@@ -62,5 +55,22 @@ export class DiscountService {
     return this.prisma.discount.delete({
       where: { id },
     });
+  }
+  async getPagination(page: number, size: number, storeId: string) {
+    const skip = (page - 1) * size;
+
+    const [data, total] = await Promise.all([
+      this.prisma.discount.findMany({
+        where: { storeId },
+        skip,
+        take: size,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.discount.count({
+        where: { storeId },
+      }),
+    ]);
+
+    return paginateResponse(data, page, size, total);
   }
 }

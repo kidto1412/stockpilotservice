@@ -9,6 +9,11 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   canActivate(context: ExecutionContext) {
+    const request = context.switchToHttp().getRequest();
+
+    if (request.url.startsWith('/uploads')) {
+      return true;
+    }
     const isPublic = this.reflector.get<boolean>(
       'isPublic',
       context.getHandler(),

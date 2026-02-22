@@ -1,4 +1,4 @@
-import { MiddlewareConsumer, Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
@@ -55,7 +55,10 @@ export class AppModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply(AuthContextMiddleware)
-      .exclude('auth/login', 'auth/register')
+      .exclude('auth/login', 'auth/register', {
+        path: 'uploads/(.*)',
+        method: RequestMethod.GET,
+      })
       .forRoutes('*');
   }
 }

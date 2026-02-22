@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { DiscountService } from './discount.service';
 import { CreateDiscountDto, UpdateDiscountDto } from './dto/dicount.dto';
@@ -24,7 +25,17 @@ export class DiscountController {
   findAll(@StoreId() storeId: string) {
     return this.service.findAll(storeId);
   }
+  @Get('pagination')
+  findPagination(
+    @Query('page') page = 1,
+    @Query('size') size = 10,
+    @StoreId() storeId: string,
+  ) {
+    const pageNumber = Math.max(1, Number(page));
+    const pageSize = Math.max(1, Number(size));
 
+    return this.service.getPagination(pageNumber, pageSize, storeId);
+  }
   @Get(':id')
   findOne(@Param('id') id: string, @StoreId() storeId: string) {
     return this.service.findOne(id, storeId);

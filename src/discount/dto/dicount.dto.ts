@@ -9,8 +9,8 @@ export class CreateDiscountDto {
   @IsString()
   description?: string;
 
-  @IsEnum(DiscountType)
-  type: DiscountType;
+  // @IsString()
+  // storeId?: string;
 
   @IsEnum(DiscountValueType)
   valueType: DiscountValueType;
@@ -18,11 +18,6 @@ export class CreateDiscountDto {
   @IsNumber()
   @Min(0)
   value: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(1)
-  minQty?: number;
 }
 
 export class UpdateDiscountDto extends CreateDiscountDto {}

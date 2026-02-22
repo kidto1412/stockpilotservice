@@ -115,9 +115,13 @@ model Store {
   address        String
   logoUrl        String?
 
-  createdAt DateTime   @default(now()) // <-- Tambahkan ini
-  updatedAt DateTime   @updatedAt // <-- Tambahkan ini
-  discounts Discount[]
+  createdAt    DateTime      @default(now()) // <-- Tambahkan ini
+  updatedAt    DateTime      @updatedAt // <-- Tambahkan ini
+  discounts    Discount[]
+  distributors Distributor[]
+  purchases    Purchase[]
+  receivables  Receivable[]
+  payables     Payable[]
 }
 
 model ProductPointRule {
@@ -201,6 +205,7 @@ model Product {
   productPointRules      ProductPointRule[]
   customerPointHistories CustomerPointHistory[]
   productDiscounts       ProductDiscount[]
+  purchaseItems          PurchaseItem[]
 }
 
 enum DiscountType {
@@ -220,10 +225,9 @@ model Discount {
   description String?
   storeId     String
   store       Store             @relation(fields: [storeId], references: [id])
-  type        DiscountType // PRODUCT | TRANSACTION | QUANTITY
   valueType   DiscountValueType // PERCENT | AMOUNT
   value       Float // 10 berarti 10% atau 10.000 tergantung tipe
-  minQty      Int? // hanya untuk QUANTITY
+  // minQty      Int? // hanya untuk QUANTITY
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 
@@ -265,6 +269,7 @@ model Transaction {
   customerPointHistories CustomerPointHistory[]
   transactionDiscountId  String?
   transactionDiscount    Discount?              @relation(fields: [transactionDiscountId], references: [id])
+  receivable             Receivable?
 }
 
 model TransactionItem {
@@ -280,14 +285,63 @@ model TransactionItem {
   discount      Discount?   @relation(fields: [discountId], references: [id])
 }
 
-model StockMovement {
-  id        String            @id @default(uuid())
+model Distributor {
+  id      String  @id @default(uuid())
+  name    String
+  phone   String?
+  email   String?
+  address String?
+  storeId String
+  store   Store   @relation(fields: [storeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stockMovements StockMovement[]
+  purchases      Purchase[]
+  payables       Payable[]
+}
+
+model Purchase {
+  id      String @id @default(uuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id])
+
+  distributorId String
+  distributor   Distributor @relation(fields: [distributorId], references: [id])
+
+  invoiceNumber String?
+  totalAmount   Float
+  note          String?
+
+  createdAt DateTime @default(now())
+
+  items   PurchaseItem[]
+  payable Payable?
+}
+
+model PurchaseItem {
+  id         String   @id @default(uuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id])
+
   productId String
-  product   Product           @relation(fields: [productId], references: [id])
-  quantity  Int
-  type      StockMovementType
-  note      String?
-  createdAt DateTime          @default(now())
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Int
+  cost     Float
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  productId     String
+  quantity      Int
+  type          StockMovementType // IN / OUT
+  source        String? // PURCHASE / SALE / ADJUSTMENT
+  referenceId   String? // purchaseId / transactionId
+  product       Product           @relation(fields: [productId], references: [id])
+  distributor   Distributor?      @relation(fields: [distributorId], references: [id])
+  distributorId String?
 }
 
 model Customer {
@@ -304,6 +358,7 @@ model Customer {
 
   transactions           Transaction[]
   customerPointHistories CustomerPointHistory[]
+  receivables            Receivable[]
 }
 
 model Shift {
@@ -329,4 +384,84 @@ model SyncLog {
   success   Boolean  @default(true)
   message   String?
   syncedAt  DateTime @default(now())
+}
+
+model ReceivablePayment {
+  id           String     @id @default(uuid())
+  receivableId String
+  receivable   Receivable @relation(fields: [receivableId], references: [id])
+
+  amount        Float
+  paymentMethod PaymentMethod
+  note          String?
+  paidAt        DateTime      @default(now())
+}
+
+model Receivable {
+  id      String @id @default(uuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+
+  totalAmount Float
+  paidAmount  Float            @default(0)
+  remaining   Float
+  dueDate     DateTime?
+  status      ReceivableStatus @default(UNPAID)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments ReceivablePayment[]
+}
+
+enum ReceivableStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+model Payable {
+  id      String @id @default(uuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id])
+
+  distributorId String
+  distributor   Distributor @relation(fields: [distributorId], references: [id])
+
+  purchaseId String   @unique
+  purchase   Purchase @relation(fields: [purchaseId], references: [id])
+
+  totalAmount Float
+  paidAmount  Float         @default(0)
+  remaining   Float
+  dueDate     DateTime?
+  status      PayableStatus @default(UNPAID)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments PayablePayment[]
+}
+
+enum PayableStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+model PayablePayment {
+  id        String  @id @default(uuid())
+  payableId String
+  payable   Payable @relation(fields: [payableId], references: [id])
+
+  amount        Float
+  paymentMethod PaymentMethod
+  note          String?
+  paidAt        DateTime      @default(now())
 }
