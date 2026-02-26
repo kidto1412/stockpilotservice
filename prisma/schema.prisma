@@ -115,13 +115,13 @@ model Store {
   address        String
   logoUrl        String?
 
-  createdAt    DateTime      @default(now()) // <-- Tambahkan ini
-  updatedAt    DateTime      @updatedAt // <-- Tambahkan ini
-  discounts    Discount[]
-  distributors Distributor[]
-  purchases    Purchase[]
-  receivables  Receivable[]
-  payables     Payable[]
+  createdAt   DateTime     @default(now()) // <-- Tambahkan ini
+  updatedAt   DateTime     @updatedAt // <-- Tambahkan ini
+  discounts   Discount[]
+  suppliers   Supplier[]
+  purchases   Purchase[]
+  receivables Receivable[]
+  payables    Payable[]
 }
 
 model ProductPointRule {
@@ -285,7 +285,7 @@ model TransactionItem {
   discount      Discount?   @relation(fields: [discountId], references: [id])
 }
 
-model Distributor {
+model Supplier {
   id      String  @id @default(uuid())
   name    String
   phone   String?
@@ -307,8 +307,8 @@ model Purchase {
   storeId String
   store   Store  @relation(fields: [storeId], references: [id])
 
-  distributorId String
-  distributor   Distributor @relation(fields: [distributorId], references: [id])
+  supplierId String
+  supllier   Supplier @relation(fields: [supplierId], references: [id])
 
   invoiceNumber String?
   totalAmount   Float
@@ -333,15 +333,15 @@ model PurchaseItem {
 }
 
 model StockMovement {
-  id            String            @id @default(uuid())
-  productId     String
-  quantity      Int
-  type          StockMovementType // IN / OUT
-  source        String? // PURCHASE / SALE / ADJUSTMENT
-  referenceId   String? // purchaseId / transactionId
-  product       Product           @relation(fields: [productId], references: [id])
-  distributor   Distributor?      @relation(fields: [distributorId], references: [id])
-  distributorId String?
+  id          String            @id @default(uuid())
+  productId   String
+  quantity    Int
+  type        StockMovementType // IN / OUT
+  source      String? // PURCHASE / SALE / ADJUSTMENT
+  referenceId String? // purchaseId / transactionId
+  product     Product           @relation(fields: [productId], references: [id])
+  supplier    Supplier?         @relation(fields: [supplierId], references: [id])
+  supplierId  String?
 }
 
 model Customer {
@@ -431,8 +431,8 @@ model Payable {
   storeId String
   store   Store  @relation(fields: [storeId], references: [id])
 
-  distributorId String
-  distributor   Distributor @relation(fields: [distributorId], references: [id])
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
 
   purchaseId String   @unique
   purchase   Purchase @relation(fields: [purchaseId], references: [id])
