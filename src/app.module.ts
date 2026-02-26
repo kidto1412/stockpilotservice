@@ -22,9 +22,13 @@ import { ProductService } from './product/product.service';
 import { ProductController } from './product/product.controller';
 import { ProductModule } from './product/product.module';
 import { DiscountModule } from './discount/discount.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,
     }),
