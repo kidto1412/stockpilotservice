@@ -23,6 +23,10 @@ import { ProductController } from './product/product.controller';
 import { ProductModule } from './product/product.module';
 import { DiscountModule } from './discount/discount.module';
 import { ConfigModule } from '@nestjs/config';
+import { SupplierController } from './supplier/supplier.controller';
+import { SupplierModule } from './supplier/supplier.module';
+import { PurcheseController } from './purchese/purchese.controller';
+import { PurchaseModule } from './purchase/purchase.module';
 
 @Module({
   imports: [
@@ -43,8 +47,10 @@ import { ConfigModule } from '@nestjs/config';
     CategoryModule,
     ProductModule,
     DiscountModule,
+    SupplierModule,
+    PurchaseModule,
   ],
-  controllers: [AppController, StaffController, ProductController],
+  controllers: [AppController, StaffController, ProductController, SupplierController, PurcheseController],
   providers: [
     AppService,
     {

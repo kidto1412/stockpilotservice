@@ -115,13 +115,14 @@ model Store {
   address        String
   logoUrl        String?
 
-  createdAt   DateTime     @default(now()) // <-- Tambahkan ini
-  updatedAt   DateTime     @updatedAt // <-- Tambahkan ini
-  discounts   Discount[]
-  suppliers   Supplier[]
-  purchases   Purchase[]
-  receivables Receivable[]
-  payables    Payable[]
+  createdAt      DateTime        @default(now()) // <-- Tambahkan ini
+  updatedAt      DateTime        @updatedAt // <-- Tambahkan ini
+  discounts      Discount[]
+  suppliers      Supplier[]
+  purchases      Purchase[]
+  receivables    Receivable[]
+  payables       Payable[]
+  stockMovements StockMovement[]
 }
 
 model ProductPointRule {
@@ -333,8 +334,11 @@ model PurchaseItem {
 }
 
 model StockMovement {
-  id          String            @id @default(uuid())
-  productId   String
+  id        String @id @default(uuid())
+  productId String
+  storeId   String
+  store     Store  @relation(fields: [storeId], references: [id])
+
   quantity    Int
   type        StockMovementType // IN / OUT
   source      String? // PURCHASE / SALE / ADJUSTMENT
