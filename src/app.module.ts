@@ -50,15 +50,15 @@ import { PurchaseModule } from './purchase/purchase.module';
     SupplierModule,
     PurchaseModule,
   ],
-  controllers: [AppController, StaffController, ProductController, SupplierController, PurcheseController],
+  controllers: [AppController],
   providers: [
     AppService,
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-    StaffService,
-    ProductService,
+    // StaffService,
+    // ProductService,
   ],
 })
 export class AppModule {
