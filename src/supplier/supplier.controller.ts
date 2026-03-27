@@ -14,46 +14,51 @@ import {
   CreateSupplierDto,
   UpdateSupplierDto,
 } from './dto/request-supplier.dto';
+import { StoreId } from 'src/common/decorators/user.decorator';
 
 @Controller('suppliers')
 export class SupplierController {
   constructor(private readonly supplierService: SupplierService) {}
 
   @Post()
-  create(@Body() dto: CreateSupplierDto, @Req() req) {
-    return this.supplierService.create(dto, req.user.storeId);
+  create(@Body() dto: CreateSupplierDto, @StoreId() storeId: string) {
+    return this.supplierService.create(dto, storeId);
   }
 
   @Get('pagination')
   getPagination(
     @Query('page') page: number,
     @Query('size') size: number,
-    @Req() req,
+    @StoreId() storeId: string,
   ) {
     return this.supplierService.getPagination(
       Number(page),
       Number(size),
-      req.user.storeId,
+      storeId,
     );
   }
 
   @Get()
-  findAll(@Req() req) {
-    return this.supplierService.findAll(req.user.storeId);
+  findAll(@StoreId() storeId: string) {
+    return this.supplierService.findAll(storeId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @Req() req) {
-    return this.supplierService.findOne(id, req.user.storeId);
+  findOne(@Param('id') id: string, @StoreId() storeId: string) {
+    return this.supplierService.findOne(id, storeId);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateSupplierDto, @Req() req) {
-    return this.supplierService.update(id, dto, req.user.storeId);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateSupplierDto,
+    @StoreId() storeId: string,
+  ) {
+    return this.supplierService.update(id, dto, storeId);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @Req() req) {
-    return this.supplierService.remove(id, req.user.storeId);
+  remove(@Param('id') id: string, @StoreId() storeId: string) {
+    return this.supplierService.remove(id, storeId);
   }
 }
