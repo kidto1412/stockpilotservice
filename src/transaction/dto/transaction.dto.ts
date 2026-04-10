@@ -52,7 +52,7 @@ export class CreateTransactionDto {
 
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @IsPositive()
   paidAmount: number;
 
   @IsArray()

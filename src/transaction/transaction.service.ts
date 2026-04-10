@@ -243,13 +243,19 @@ export class TransactionService {
         throw new BadRequestException('Grand total tidak boleh negatif');
       }
 
-      if (dto.paidAmount < grandTotal) {
-        throw new BadRequestException(
-          `Jumlah bayar kurang. Minimal pembayaran adalah ${grandTotal}`,
-        );
+      if (dto.paidAmount <= 0) {
+        throw new BadRequestException('Jumlah bayar harus lebih dari 0');
       }
 
-      const changeAmount = dto.paidAmount - grandTotal;
+      const paymentDelta = dto.paidAmount - grandTotal;
+      const changeAmount = paymentDelta > 0 ? paymentDelta : 0;
+      const remainingDebt = paymentDelta < 0 ? Math.abs(paymentDelta) : 0;
+
+      if (remainingDebt > 0 && !dto.customerId) {
+        throw new BadRequestException(
+          'Transaksi hutang wajib memilih customer',
+        );
+      }
 
       const invoiceNumber = await this.generateInvoiceNumber(tx as any);
 
@@ -298,6 +304,20 @@ export class TransactionService {
         });
       }
 
+      if (remainingDebt > 0) {
+        await tx.receivable.create({
+          data: {
+            storeId,
+            customerId: dto.customerId,
+            transactionId: transaction.id,
+            totalAmount: grandTotal,
+            paidAmount: dto.paidAmount,
+            remaining: remainingDebt,
+            status: 'PARTIAL',
+          },
+        });
+      }
+
       const savedTransaction = await tx.transaction.findUnique({
         where: { id: transaction.id },
         include: {
@@ -332,9 +352,11 @@ export class TransactionService {
       return {
         ...savedTransaction,
         paymentNotification:
-          changeAmount > 0
-            ? `Ada pengembalian sebesar ${changeAmount}`
-            : 'Pembayaran pas',
+          remainingDebt > 0
+            ? `Pembayaran kurang. Masuk hutang sebesar ${remainingDebt}`
+            : changeAmount > 0
+              ? `Ada pengembalian sebesar ${changeAmount}`
+              : 'Pembayaran pas',
       };
     });
   }
