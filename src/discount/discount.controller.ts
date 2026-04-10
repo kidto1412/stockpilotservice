@@ -9,7 +9,11 @@ import {
   Query,
 } from '@nestjs/common';
 import { DiscountService } from './discount.service';
-import { CreateDiscountDto, UpdateDiscountDto } from './dto/dicount.dto';
+import {
+  AssignDiscountProductsDto,
+  CreateDiscountDto,
+  UpdateDiscountDto,
+} from './dto/dicount.dto';
 import { StoreId } from 'src/common/decorators/user.decorator';
 
 @Controller('discounts')
@@ -38,7 +42,16 @@ export class DiscountController {
   }
   @Get(':id')
   findOne(@Param('id') id: string, @StoreId() storeId: string) {
-    return this.service.findOne(id, storeId);
+    return this.service.findOneWithProducts(id, storeId);
+  }
+
+  @Patch(':id/products')
+  assignProducts(
+    @Param('id') id: string,
+    @Body() dto: AssignDiscountProductsDto,
+    @StoreId() storeId: string,
+  ) {
+    return this.service.assignProducts(id, dto.productIds, storeId);
   }
 
   @Patch(':id')

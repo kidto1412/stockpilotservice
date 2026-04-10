@@ -16,6 +16,23 @@ import { paginateResponse } from 'src/utils/response.util';
 export class TransactionService {
   constructor(private prisma: PrismaService) {}
 
+  private getDiscountAmount(
+    unitPrice: number,
+    quantity: number,
+    discount?: { valueType: 'PERCENT' | 'AMOUNT'; value: number } | null,
+  ) {
+    if (!discount) return 0;
+
+    const lineTotal = unitPrice * quantity;
+
+    if (discount.valueType === 'PERCENT') {
+      const amount = (lineTotal * discount.value) / 100;
+      return Math.min(lineTotal, Math.max(0, amount));
+    }
+
+    return Math.min(lineTotal, Math.max(0, discount.value));
+  }
+
   private async generateInvoiceNumber(tx: PrismaService) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const candidate = `TRX-${Date.now()}-${Math.floor(Math.random() * 1000)
@@ -58,6 +75,19 @@ export class TransactionService {
           id: { in: productIds },
           storeId,
         },
+        include: {
+          productDiscounts: {
+            include: {
+              discount: {
+                select: {
+                  id: true,
+                  valueType: true,
+                  value: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       if (products.length !== productIds.length) {
@@ -71,6 +101,13 @@ export class TransactionService {
       );
 
       let totalAmount = 0;
+      const itemCalculations: {
+        productId: string;
+        quantity: number;
+        price: number;
+        subtotal: number;
+        discountId?: string;
+      }[] = [];
 
       for (const item of dto.items) {
         const product = productMap.get(item.productId);
@@ -88,7 +125,62 @@ export class TransactionService {
         }
 
         const price = item.price ?? product.price;
-        totalAmount += price * item.quantity;
+
+        let appliedDiscount: {
+          id: string;
+          valueType: 'PERCENT' | 'AMOUNT';
+          value: number;
+        } | null = null;
+
+        if (item.discountId) {
+          const selected = product.productDiscounts.find(
+            (relation) => relation.discountId === item.discountId,
+          );
+
+          if (selected?.discount) {
+            appliedDiscount = selected.discount;
+          }
+        }
+
+        if (!appliedDiscount && product.productDiscounts.length) {
+          let bestDiscount = product.productDiscounts[0].discount;
+          let bestAmount = this.getDiscountAmount(
+            price,
+            item.quantity,
+            bestDiscount,
+          );
+
+          for (const relation of product.productDiscounts.slice(1)) {
+            const amount = this.getDiscountAmount(
+              price,
+              item.quantity,
+              relation.discount,
+            );
+
+            if (amount > bestAmount) {
+              bestAmount = amount;
+              bestDiscount = relation.discount;
+            }
+          }
+
+          appliedDiscount = bestDiscount;
+        }
+
+        const discountAmount = this.getDiscountAmount(
+          price,
+          item.quantity,
+          appliedDiscount,
+        );
+        const subtotal = price * item.quantity - discountAmount;
+
+        totalAmount += subtotal;
+        itemCalculations.push({
+          productId: item.productId,
+          quantity: item.quantity,
+          price,
+          subtotal,
+          discountId: appliedDiscount?.id,
+        });
       }
 
       if (dto.customerId) {
@@ -167,18 +259,7 @@ export class TransactionService {
           grandTotal,
           transactionDiscountId: dto.transactionDiscountId,
           transactionItems: {
-            create: dto.items.map((item) => {
-              const product = productMap.get(item.productId);
-              const price = item.price ?? product.price;
-
-              return {
-                productId: item.productId,
-                quantity: item.quantity,
-                price,
-                subtotal: price * item.quantity,
-                discountId: item.discountId,
-              };
-            }),
+            create: itemCalculations,
           },
         },
         include: {

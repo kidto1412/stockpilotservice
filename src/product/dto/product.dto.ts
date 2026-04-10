@@ -1,4 +1,6 @@
 import {
+  ArrayUnique,
+  IsArray,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -39,6 +41,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsUUID()
   categoryId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  discountIds?: string[];
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}

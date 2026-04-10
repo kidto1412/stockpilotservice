@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ForbiddenException,
@@ -12,22 +13,60 @@ import { generateBarcode } from 'src/utils/generatebarcode';
 export class ProductService {
   constructor(private prisma: PrismaService) {}
 
+  private async ensureDiscountsBelongToStore(
+    discountIds: string[],
+    storeId: string,
+  ) {
+    if (!discountIds || discountIds.length === 0) return;
+
+    const discounts = await this.prisma.discount.findMany({
+      where: {
+        id: { in: discountIds },
+        storeId,
+      },
+      select: { id: true },
+    });
+
+    if (discounts.length !== discountIds.length) {
+      throw new BadRequestException(
+        'Sebagian discountIds tidak ditemukan pada store ini',
+      );
+    }
+  }
+
   async create(
     dto: CreateProductDto,
     imageUrl: string | undefined,
     storeId: string,
   ) {
+    const { discountIds, ...productData } = dto;
+
     let barcode = dto.barcode?.trim();
 
     if (!barcode) {
       barcode = await generateBarcode(this.prisma, storeId);
     }
+    await this.ensureDiscountsBelongToStore(discountIds, storeId);
+
     return this.prisma.product.create({
       data: {
-        ...dto,
+        ...productData,
         barcode,
         imageUrl,
-        storeId, // ambil dari token
+        storeId,
+        productDiscounts: discountIds?.length
+          ? {
+              create: discountIds.map((discountId) => ({ discountId })),
+            }
+          : undefined,
+      },
+      include: {
+        category: true,
+        productDiscounts: {
+          include: {
+            discount: true,
+          },
+        },
       },
     });
   }
@@ -39,7 +78,14 @@ export class ProductService {
         where: { storeId },
         skip,
         take: size,
-        include: { category: true },
+        include: {
+          category: true,
+          productDiscounts: {
+            include: {
+              discount: true,
+            },
+          },
+        },
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.product.count({
@@ -53,12 +99,29 @@ export class ProductService {
   async findAll(storeId: string) {
     return this.prisma.product.findMany({
       where: { storeId },
-      include: { category: true },
+      include: {
+        category: true,
+        productDiscounts: {
+          include: {
+            discount: true,
+          },
+        },
+      },
     });
   }
 
   async findOne(id: string, storeId: string) {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        productDiscounts: {
+          include: {
+            discount: true,
+          },
+        },
+      },
+    });
 
     if (!product) throw new NotFoundException('Product not found');
 
@@ -76,14 +139,42 @@ export class ProductService {
     imageUrl: string | undefined,
     storeId: string,
   ) {
-    const product = await this.findOne(id, storeId); // sudah cek storeId juga
+    const { discountIds, ...productData } = dto;
 
-    return this.prisma.product.update({
-      where: { id },
-      data: {
-        ...dto,
-        ...(imageUrl && { imageUrl }),
-      },
+    await this.findOne(id, storeId);
+    await this.ensureDiscountsBelongToStore(discountIds, storeId);
+
+    return this.prisma.$transaction(async (tx) => {
+      if (discountIds) {
+        await tx.productDiscount.deleteMany({
+          where: { productId: id },
+        });
+
+        if (discountIds.length) {
+          await tx.productDiscount.createMany({
+            data: discountIds.map((discountId) => ({
+              productId: id,
+              discountId,
+            })),
+          });
+        }
+      }
+
+      return tx.product.update({
+        where: { id },
+        data: {
+          ...productData,
+          ...(imageUrl && { imageUrl }),
+        },
+        include: {
+          category: true,
+          productDiscounts: {
+            include: {
+              discount: true,
+            },
+          },
+        },
+      });
     });
   }
 
