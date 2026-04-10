@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as csv from 'csv-parser';
+import csv = require('csv-parser');
 
 export async function readCsv(fileName: string): Promise<any[]> {
   const filePath = path.join(process.cwd(), 'src/data', fileName);

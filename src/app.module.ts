@@ -25,8 +25,10 @@ import { DiscountModule } from './discount/discount.module';
 import { ConfigModule } from '@nestjs/config';
 import { SupplierController } from './supplier/supplier.controller';
 import { SupplierModule } from './supplier/supplier.module';
-import { PurcheseController } from './purchese/purchese.controller';
+// import { PurcheseController } from './purchese/purchese.controller';
 import { PurchaseModule } from './purchase/purchase.module';
+import { ReportTransactionModule } from './report-transaction/report-transaction.module';
+import { TransactionModule } from './transaction/transaction.module';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { PurchaseModule } from './purchase/purchase.module';
     DiscountModule,
     SupplierModule,
     PurchaseModule,
+    TransactionModule,
+    ReportTransactionModule,
   ],
   controllers: [AppController],
   providers: [
