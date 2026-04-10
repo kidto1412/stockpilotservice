@@ -259,6 +259,8 @@ model Transaction {
   discount      Float?            @default(0)
   tax           Float?            @default(0)
   grandTotal    Float
+  paidAmount    Float             @default(0)
+  changeAmount  Float             @default(0)
   status        TransactionStatus @default(COMPLETED)
   isSynced      Boolean           @default(false)
   createdAt     DateTime          @default(now())

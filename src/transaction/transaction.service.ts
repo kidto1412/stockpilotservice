@@ -237,12 +237,19 @@ export class TransactionService {
       }
 
       const discount = dto.discount ?? 0;
-      const tax = dto.tax ?? 0;
-      const grandTotal = totalAmount - discount + tax;
+      const grandTotal = totalAmount - discount;
 
       if (grandTotal < 0) {
         throw new BadRequestException('Grand total tidak boleh negatif');
       }
+
+      if (dto.paidAmount < grandTotal) {
+        throw new BadRequestException(
+          `Jumlah bayar kurang. Minimal pembayaran adalah ${grandTotal}`,
+        );
+      }
+
+      const changeAmount = dto.paidAmount - grandTotal;
 
       const invoiceNumber = await this.generateInvoiceNumber(tx as any);
 
@@ -255,8 +262,10 @@ export class TransactionService {
           paymentMethod: dto.paymentMethod,
           totalAmount,
           discount,
-          tax,
+          tax: 0,
           grandTotal,
+          paidAmount: dto.paidAmount,
+          changeAmount,
           transactionDiscountId: dto.transactionDiscountId,
           transactionItems: {
             create: itemCalculations,
@@ -289,7 +298,7 @@ export class TransactionService {
         });
       }
 
-      return tx.transaction.findUnique({
+      const savedTransaction = await tx.transaction.findUnique({
         where: { id: transaction.id },
         include: {
           customer: {
@@ -319,6 +328,14 @@ export class TransactionService {
           },
         },
       });
+
+      return {
+        ...savedTransaction,
+        paymentNotification:
+          changeAmount > 0
+            ? `Ada pengembalian sebesar ${changeAmount}`
+            : 'Pembayaran pas',
+      };
     });
   }
 

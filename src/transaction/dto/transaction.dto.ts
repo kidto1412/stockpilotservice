@@ -50,11 +50,10 @@ export class CreateTransactionDto {
   @Min(0)
   discount?: number;
 
-  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  tax?: number;
+  paidAmount: number;
 
   @IsArray()
   @ArrayMinSize(1)
