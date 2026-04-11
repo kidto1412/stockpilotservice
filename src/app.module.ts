@@ -30,6 +30,7 @@ import { PurchaseModule } from './purchase/purchase.module';
 import { ReportTransactionModule } from './report-transaction/report-transaction.module';
 import { TransactionModule } from './transaction/transaction.module';
 import { StockMovementModule } from './stock-movement/stock-movement.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { StockMovementModule } from './stock-movement/stock-movement.module';
     PurchaseModule,
     TransactionModule,
     StockMovementModule,
+    DashboardModule,
     ReportTransactionModule,
   ],
   controllers: [AppController],

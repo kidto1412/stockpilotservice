@@ -9,7 +9,6 @@ import {
   UseInterceptors,
   UploadedFile,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { UploadInterceptor } from 'src/common/interceptors/upload.interceptor';
@@ -26,7 +25,7 @@ export class ProductController {
   @UseInterceptors(UploadInterceptor('image'))
   async create(
     @Body() dto: CreateProductDto,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: Express.Multer.File | undefined,
     @StoreId() storeId: string,
   ) {
     let imageUrl: string | undefined;
@@ -68,7 +67,7 @@ export class ProductController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateProductDto,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: Express.Multer.File | undefined,
     @StoreId() storeId: string,
   ) {
     let imageUrl: string | undefined;
