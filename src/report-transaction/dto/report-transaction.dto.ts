@@ -47,6 +47,12 @@ export class ReportTransactionQueryDto {
   status?: TransactionStatus;
 }
 
+export class GeneralProductReportQueryDto extends ReportTransactionQueryDto {
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+}
+
 export class ExportReportTransactionDto extends GeneralProductReportQueryDto {
   @IsOptional()
   @IsEnum(ReportGroupBy)
@@ -55,10 +61,4 @@ export class ExportReportTransactionDto extends GeneralProductReportQueryDto {
   @IsOptional()
   @IsEnum(ReportExportFormat)
   format?: ReportExportFormat;
-}
-
-export class GeneralProductReportQueryDto extends ReportTransactionQueryDto {
-  @IsOptional()
-  @IsUUID()
-  categoryId?: string;
 }
