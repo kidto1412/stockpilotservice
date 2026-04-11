@@ -411,11 +411,13 @@ export class TransactionService {
 
   async findSalesPagination(query: SalesTransactionQueryDto, storeId: string) {
     const page = Math.max(1, Number(query.page || 1));
-    const size = Math.max(1, Number(query.size || 10));
-    const skip = (page - 1) * size;
+    const requestedSize =
+      query.size !== undefined ? Math.max(1, Number(query.size)) : undefined;
+    const skip = requestedSize ? (page - 1) * requestedSize : undefined;
 
     const where: Prisma.TransactionWhereInput = {
       storeId,
+      status: 'COMPLETED',
     };
 
     if (query.paymentMethod) {
@@ -439,8 +441,8 @@ export class TransactionService {
     const [data, total] = await Promise.all([
       this.prisma.transaction.findMany({
         where,
-        skip,
-        take: size,
+        ...(skip !== undefined ? { skip } : {}),
+        ...(requestedSize !== undefined ? { take: requestedSize } : {}),
         orderBy: { createdAt: 'desc' },
         include: {
           customer: {
@@ -478,7 +480,10 @@ export class TransactionService {
       this.prisma.transaction.count({ where }),
     ]);
 
-    return paginateResponse(data, page, size, total);
+    const effectivePage = requestedSize !== undefined ? page : 1;
+    const effectiveSize = requestedSize ?? (total > 0 ? total : 1);
+
+    return paginateResponse(data, effectivePage, effectiveSize, total);
   }
 
   async getSalesSummary(query: SalesSummaryQueryDto, storeId: string) {
