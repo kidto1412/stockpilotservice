@@ -15,14 +15,20 @@ import {
   UpdateDiscountDto,
 } from './dto/dicount.dto';
 import { StoreId } from 'src/common/decorators/user.decorator';
+import {
+  CREATED,
+  DELETED,
+  UPDATED,
+} from 'src/common/constant/operations.constant';
 
 @Controller('discounts')
 export class DiscountController {
   constructor(private readonly service: DiscountService) {}
 
   @Post()
-  create(@Body() dto: CreateDiscountDto, @StoreId() storeId: string) {
-    return this.service.create(dto, storeId);
+  async create(@Body() dto: CreateDiscountDto, @StoreId() storeId: string) {
+    await this.service.create(dto, storeId);
+    return CREATED;
   }
 
   @Get()
@@ -55,16 +61,18 @@ export class DiscountController {
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Param('id') id: string,
     @Body() dto: UpdateDiscountDto,
     @StoreId() storeId: string,
   ) {
-    return this.service.update(id, dto, storeId);
+    await this.service.update(id, dto, storeId);
+    return UPDATED;
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @StoreId() storeId: string) {
-    return this.service.remove(id, storeId);
+  async remove(@Param('id') id: string, @StoreId() storeId: string) {
+    await this.service.remove(id, storeId);
+    return DELETED;
   }
 }

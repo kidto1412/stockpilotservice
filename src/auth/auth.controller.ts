@@ -26,4 +26,10 @@ export class AuthController {
   verify() {
     return { valid: true };
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout() {
+    return this.authService.logout();
+  }
 }

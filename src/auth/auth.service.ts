@@ -64,4 +64,11 @@ export class AuthService {
       token: token,
     };
   }
+
+  async logout() {
+    return {
+      message: 'Logout berhasil. Silakan hapus token di frontend.',
+      data: null,
+    };
+  }
 }
