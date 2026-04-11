@@ -348,6 +348,8 @@ model StockMovement {
   product     Product           @relation(fields: [productId], references: [id])
   supplier    Supplier?         @relation(fields: [supplierId], references: [id])
   supplierId  String?
+  note        String?
+  createdAt   DateTime          @default(now())
 }
 
 model Customer {

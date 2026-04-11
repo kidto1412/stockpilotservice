@@ -29,6 +29,7 @@ import { SupplierModule } from './supplier/supplier.module';
 import { PurchaseModule } from './purchase/purchase.module';
 import { ReportTransactionModule } from './report-transaction/report-transaction.module';
 import { TransactionModule } from './transaction/transaction.module';
+import { StockMovementModule } from './stock-movement/stock-movement.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { TransactionModule } from './transaction/transaction.module';
     SupplierModule,
     PurchaseModule,
     TransactionModule,
+    StockMovementModule,
     ReportTransactionModule,
   ],
   controllers: [AppController],
