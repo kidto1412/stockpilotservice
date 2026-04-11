@@ -40,7 +40,9 @@ export class StockMovementService {
     return `${year}-${month}-${day}`;
   }
 
-  private buildSummary(movements: Array<{ type: StockMovementType; quantity: number }>): StockMovementSummary {
+  private buildSummary(
+    movements: Array<{ type: StockMovementType; quantity: number }>,
+  ): StockMovementSummary {
     return movements.reduce<StockMovementSummary>(
       (acc, movement) => {
         if (movement.type === StockMovementType.IN) {
@@ -129,7 +131,10 @@ export class StockMovementService {
   ) {
     let reference: any = null;
 
-    if (movement.source === StockMovementSource.PURCHASE && movement.referenceId) {
+    if (
+      movement.source === StockMovementSource.PURCHASE &&
+      movement.referenceId
+    ) {
       reference = await this.prisma.purchase.findUnique({
         where: { id: movement.referenceId },
         select: {
@@ -200,7 +205,9 @@ export class StockMovementService {
       this.prisma.stockMovement.count({ where }),
     ]);
 
-    const content = await Promise.all(data.map((movement) => this.enrichReference(movement)));
+    const content = await Promise.all(
+      data.map((movement) => this.enrichReference(movement)),
+    );
 
     const summary = this.buildSummary(data);
 
@@ -274,7 +281,9 @@ export class StockMovementService {
       this.prisma.stockMovement.count({ where }),
     ]);
 
-    const content = await Promise.all(data.map((movement) => this.enrichReference(movement)));
+    const content = await Promise.all(
+      data.map((movement) => this.enrichReference(movement)),
+    );
     const summary = this.buildSummary(data);
 
     return {
