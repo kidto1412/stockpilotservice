@@ -13,6 +13,31 @@ import { generateBarcode } from 'src/utils/generatebarcode';
 export class ProductService {
   constructor(private prisma: PrismaService) {}
 
+  private async resolveBarcode(
+    barcodeInput: unknown,
+    storeId: string,
+  ): Promise<string | undefined> {
+    if (barcodeInput === undefined) {
+      return undefined;
+    }
+
+    if (barcodeInput === null) {
+      return generateBarcode(this.prisma, storeId);
+    }
+
+    if (typeof barcodeInput === 'string') {
+      const normalized = barcodeInput.trim();
+
+      if (!normalized || normalized.toLowerCase() === 'null') {
+        return generateBarcode(this.prisma, storeId);
+      }
+
+      return normalized;
+    }
+
+    return generateBarcode(this.prisma, storeId);
+  }
+
   private async ensureDiscountsBelongToStore(
     discountIds: string[],
     storeId: string,
@@ -39,13 +64,12 @@ export class ProductService {
     imageUrl: string | undefined,
     storeId: string,
   ) {
-    const { discountIds, ...productData } = dto;
+    const { discountIds, barcode: barcodeInput, ...productData } = dto as any;
 
-    let barcode = dto.barcode?.trim();
+    const barcode =
+      (await this.resolveBarcode(barcodeInput, storeId)) ||
+      (await generateBarcode(this.prisma, storeId));
 
-    if (!barcode) {
-      barcode = await generateBarcode(this.prisma, storeId);
-    }
     await this.ensureDiscountsBelongToStore(discountIds, storeId);
 
     return this.prisma.product.create({
@@ -139,10 +163,18 @@ export class ProductService {
     imageUrl: string | undefined,
     storeId: string,
   ) {
-    const { discountIds, ...productData } = dto;
+    const { discountIds, barcode: barcodeInput, ...productData } = dto as any;
 
     await this.findOne(id, storeId);
     await this.ensureDiscountsBelongToStore(discountIds, storeId);
+
+    let barcodeData: { barcode?: string } = {};
+
+    if (Object.prototype.hasOwnProperty.call(dto, 'barcode')) {
+      barcodeData = {
+        barcode: await this.resolveBarcode(barcodeInput, storeId),
+      };
+    }
 
     return this.prisma.$transaction(async (tx) => {
       if (discountIds) {
@@ -164,6 +196,7 @@ export class ProductService {
         where: { id },
         data: {
           ...productData,
+          ...barcodeData,
           ...(imageUrl && { imageUrl }),
         },
         include: {
