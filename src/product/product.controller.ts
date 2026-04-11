@@ -44,17 +44,26 @@ export class ProductController {
   async findPagination(
     @Query('page') page = 1,
     @Query('size') size = 10,
+    @Query('categoryId') categoryId: string | undefined,
     @StoreId() storeId: string,
   ) {
     const pageNumber = Math.max(1, Number(page));
     const pageSize = Math.max(1, Number(size));
 
-    return this.productService.getPagination(pageNumber, pageSize, storeId);
+    return this.productService.getPagination(
+      pageNumber,
+      pageSize,
+      storeId,
+      categoryId,
+    );
   }
 
   @Get()
-  async findAll(@StoreId() storeId: string) {
-    return this.productService.findAll(storeId);
+  async findAll(
+    @Query('categoryId') categoryId: string | undefined,
+    @StoreId() storeId: string,
+  ) {
+    return this.productService.findAll(storeId, categoryId);
   }
 
   @Get(':id')

@@ -94,12 +94,21 @@ export class ProductService {
       },
     });
   }
-  async getPagination(page: number, size: number, storeId: string) {
+  async getPagination(
+    page: number,
+    size: number,
+    storeId: string,
+    categoryId?: string,
+  ) {
     const skip = (page - 1) * size;
+    const where = {
+      storeId,
+      ...(categoryId ? { categoryId } : {}),
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.product.findMany({
-        where: { storeId },
+        where,
         skip,
         take: size,
         include: {
@@ -113,16 +122,21 @@ export class ProductService {
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.product.count({
-        where: { storeId },
+        where,
       }),
     ]);
 
     return paginateResponse(data, page, size, total);
   }
 
-  async findAll(storeId: string) {
+  async findAll(storeId: string, categoryId?: string) {
+    const where = {
+      storeId,
+      ...(categoryId ? { categoryId } : {}),
+    };
+
     return this.prisma.product.findMany({
-      where: { storeId },
+      where,
       include: {
         category: true,
         productDiscounts: {
