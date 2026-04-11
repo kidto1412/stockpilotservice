@@ -3,6 +3,7 @@ import { StoreId, CurrentUser } from 'src/common/decorators/user.decorator';
 import { TransactionService } from './transaction.service';
 import {
   CreateTransactionDto,
+  SalesTransactionQueryDto,
   TransactionQueryDto,
 } from './dto/transaction.dto';
 
@@ -22,6 +23,14 @@ export class TransactionController {
   @Get()
   findAll(@Query() query: TransactionQueryDto, @StoreId() storeId: string) {
     return this.transactionService.findAll(query, storeId);
+  }
+
+  @Get('sales/pagination')
+  findSalesPagination(
+    @Query() query: SalesTransactionQueryDto,
+    @StoreId() storeId: string,
+  ) {
+    return this.transactionService.findSalesPagination(query, storeId);
   }
 
   @Get(':id')

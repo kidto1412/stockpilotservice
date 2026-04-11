@@ -5,9 +5,11 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
   CreateTransactionDto,
+  SalesTransactionQueryDto,
   TransactionQueryDto,
 } from './dto/transaction.dto';
 import { paginateResponse } from 'src/utils/response.util';
@@ -401,6 +403,78 @@ export class TransactionService {
       this.prisma.transaction.count({
         where: { storeId },
       }),
+    ]);
+
+    return paginateResponse(data, page, size, total);
+  }
+
+  async findSalesPagination(query: SalesTransactionQueryDto, storeId: string) {
+    const page = Math.max(1, Number(query.page || 1));
+    const size = Math.max(1, Number(query.size || 10));
+    const skip = (page - 1) * size;
+
+    const where: Prisma.TransactionWhereInput = {
+      storeId,
+    };
+
+    if (query.paymentMethod) {
+      where.paymentMethod = query.paymentMethod;
+    }
+
+    if (query.startDate || query.endDate) {
+      where.createdAt = {};
+
+      if (query.startDate) {
+        where.createdAt.gte = new Date(query.startDate);
+      }
+
+      if (query.endDate) {
+        const endDate = new Date(query.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where,
+        skip,
+        take: size,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+            },
+          },
+          cashier: {
+            select: {
+              id: true,
+              fullName: true,
+              username: true,
+            },
+          },
+          transactionItems: {
+            select: {
+              id: true,
+              productId: true,
+              quantity: true,
+              price: true,
+              subtotal: true,
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  barcode: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.transaction.count({ where }),
     ]);
 
     return paginateResponse(data, page, size, total);

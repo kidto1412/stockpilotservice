@@ -76,14 +76,13 @@ export class DashboardService {
       0,
     );
 
-    const totalRevenue = transactionAggregate._sum.grandTotal || 0;
-    const totalProfit = totalRevenue - totalCost;
+    const totalSalesAmount = transactionAggregate._sum.grandTotal || 0;
 
     return {
       totalProducts,
       totalCategories,
       totalSold,
-      totalProfit,
+      totalSalesAmount,
     };
   }
 }
