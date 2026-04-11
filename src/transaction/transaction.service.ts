@@ -576,7 +576,20 @@ export class TransactionService {
 
     const totalProfit = totalSalesAmount - totalCost;
 
+    const totalSoldQuantity = soldProducts.reduce(
+      (acc, item) => acc + item.totalQuantity,
+      0,
+    );
+
     return {
+      content: soldProducts,
+      summary: {
+        totalSalesAmount,
+        totalCost,
+        totalProfit,
+        totalSoldProducts: soldProducts.length,
+        totalSoldQuantity,
+      },
       totalSalesAmount,
       totalCost,
       totalProfit,
