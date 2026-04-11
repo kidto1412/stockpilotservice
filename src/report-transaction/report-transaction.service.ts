@@ -1,26 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma, TransactionStatus } from '@prisma/client';
+import ExcelJS from 'exceljs';
+import PDFDocument = require('pdfkit');
 import { PrismaService } from 'src/prisma/prisma.service';
-import { paginateResponse } from 'src/utils/response.util';
 import {
   ExportReportTransactionDto,
   GeneralProductReportQueryDto,
   ReportExportFormat,
-  ReportGroupBy,
   ReportTransactionQueryDto,
 } from './dto/report-transaction.dto';
-import { Prisma } from '@prisma/client';
-import ExcelJS from 'exceljs';
-import PDFDocument = require('pdfkit');
-
-interface GroupedReportItem {
-  period: string;
-  totalTransaction: number;
-  totalAmount: number;
-  totalDiscount: number;
-  totalGrandTotal: number;
-  totalPaidAmount: number;
-  totalChangeAmount: number;
-}
 
 export interface GeneralProductReportItem {
   productId: string;
@@ -54,7 +42,10 @@ export class ReportTransactionService {
     query: ReportTransactionQueryDto,
     storeId: string,
   ): Prisma.TransactionWhereInput {
-    const where: Prisma.TransactionWhereInput = { storeId };
+    const where: Prisma.TransactionWhereInput = {
+      storeId,
+      status: TransactionStatus.COMPLETED,
+    };
 
     if (query.paymentMethod) {
       where.paymentMethod = query.paymentMethod;
@@ -118,29 +109,21 @@ export class ReportTransactionService {
     query: GeneralProductReportQueryDto,
     storeId: string,
   ) {
-    const page = Math.max(1, Number(query.page || 1));
-    const size = Math.max(1, Number(query.size || 10));
-    const skip = (page - 1) * size;
     const productWhere = this.buildProductWhere(query, storeId);
     const dateRange = this.buildDateRange(query);
 
-    const [products, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where: productWhere,
-        skip,
-        take: size,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          category: {
-            select: {
-              id: true,
-              name: true,
-            },
+    const products = await this.prisma.product.findMany({
+      where: productWhere,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
           },
         },
-      }),
-      this.prisma.product.count({ where: productWhere }),
-    ]);
+      },
+    });
 
     const productIds = products.map((product) => product.id);
 
@@ -166,7 +149,7 @@ export class ReportTransactionService {
         where: {
           productId: { in: productIds },
           transaction: {
-            status: 'COMPLETED',
+            status: TransactionStatus.COMPLETED,
             ...(dateRange
               ? {
                   createdAt: dateRange,
@@ -186,16 +169,14 @@ export class ReportTransactionService {
       string,
       { boughtQuantity: number; boughtTotal: number }
     >();
-
     for (const item of purchaseItems) {
-      const current = purchaseMap.get(item.productId) || {
+      const current = purchaseMap.get(item.productId) ?? {
         boughtQuantity: 0,
         boughtTotal: 0,
       };
 
       current.boughtQuantity += item.quantity;
       current.boughtTotal += item.quantity * item.cost;
-
       purchaseMap.set(item.productId, current);
     }
 
@@ -203,26 +184,24 @@ export class ReportTransactionService {
       string,
       { soldQuantity: number; soldTotal: number }
     >();
-
     for (const item of transactionItems) {
-      const current = salesMap.get(item.productId) || {
+      const current = salesMap.get(item.productId) ?? {
         soldQuantity: 0,
         soldTotal: 0,
       };
 
       current.soldQuantity += item.quantity;
       current.soldTotal += item.subtotal;
-
       salesMap.set(item.productId, current);
     }
 
     const content: GeneralProductReportItem[] = products.map((product) => {
-      const purchased = purchaseMap.get(product.id) || {
+      const purchased = purchaseMap.get(product.id) ?? {
         boughtQuantity: 0,
         boughtTotal: 0,
       };
 
-      const sold = salesMap.get(product.id) || {
+      const sold = salesMap.get(product.id) ?? {
         soldQuantity: 0,
         soldTotal: 0,
       };
@@ -264,207 +243,13 @@ export class ReportTransactionService {
 
     return {
       content,
-      page,
-      size,
-      total,
-      totalPages: Math.ceil(total / size),
-      hasNextPage: page * size < total,
-      hasPrevPage: page > 1,
+      page: 1,
+      size: content.length,
+      total: content.length,
+      totalPages: 1,
+      hasNextPage: false,
+      hasPrevPage: false,
       summary,
-    };
-  }
-
-  private getPeriodLabel(date: Date, groupBy: ReportGroupBy) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-
-    if (groupBy === ReportGroupBy.YEARLY) {
-      return `${year}`;
-    }
-
-    if (groupBy === ReportGroupBy.MONTHLY) {
-      return `${year}-${month}`;
-    }
-
-    return `${year}-${month}-${day}`;
-  }
-
-  private async getGroupedSummary(
-    query: ReportTransactionQueryDto,
-    storeId: string,
-    groupBy: ReportGroupBy,
-  ) {
-    const where = this.buildWhere(query, storeId);
-
-    const rows = await this.prisma.transaction.findMany({
-      where,
-      select: {
-        createdAt: true,
-        totalAmount: true,
-        discount: true,
-        grandTotal: true,
-        paidAmount: true,
-        changeAmount: true,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
-
-    const grouped = new Map<string, GroupedReportItem>();
-
-    rows.forEach((item) => {
-      const period = this.getPeriodLabel(item.createdAt, groupBy);
-
-      if (!grouped.has(period)) {
-        grouped.set(period, {
-          period,
-          totalTransaction: 0,
-          totalAmount: 0,
-          totalDiscount: 0,
-          totalGrandTotal: 0,
-          totalPaidAmount: 0,
-          totalChangeAmount: 0,
-        });
-      }
-
-      const current = grouped.get(period);
-
-      current.totalTransaction += 1;
-      current.totalAmount += item.totalAmount || 0;
-      current.totalDiscount += item.discount || 0;
-      current.totalGrandTotal += item.grandTotal || 0;
-      current.totalPaidAmount += item.paidAmount || 0;
-      current.totalChangeAmount += item.changeAmount || 0;
-    });
-
-    return Array.from(grouped.values()).sort((a, b) =>
-      a.period.localeCompare(b.period),
-    );
-  }
-
-  private async exportToExcel(
-    data: GroupedReportItem[],
-    groupBy: ReportGroupBy,
-  ) {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Report');
-
-    worksheet.columns = [
-      { header: 'Periode', key: 'period', width: 20 },
-      { header: 'Total Transaksi', key: 'totalTransaction', width: 18 },
-      { header: 'Total Amount', key: 'totalAmount', width: 18 },
-      { header: 'Total Discount', key: 'totalDiscount', width: 18 },
-      { header: 'Grand Total', key: 'totalGrandTotal', width: 20 },
-      { header: 'Total Dibayar', key: 'totalPaidAmount', width: 18 },
-      { header: 'Total Kembalian', key: 'totalChangeAmount', width: 18 },
-    ];
-
-    data.forEach((item) => {
-      worksheet.addRow(item);
-    });
-
-    const totalRow = {
-      period: 'TOTAL',
-      totalTransaction: data.reduce(
-        (acc, item) => acc + item.totalTransaction,
-        0,
-      ),
-      totalAmount: data.reduce((acc, item) => acc + item.totalAmount, 0),
-      totalDiscount: data.reduce((acc, item) => acc + item.totalDiscount, 0),
-      totalGrandTotal: data.reduce(
-        (acc, item) => acc + item.totalGrandTotal,
-        0,
-      ),
-      totalPaidAmount: data.reduce(
-        (acc, item) => acc + item.totalPaidAmount,
-        0,
-      ),
-      totalChangeAmount: data.reduce(
-        (acc, item) => acc + item.totalChangeAmount,
-        0,
-      ),
-    };
-
-    worksheet.addRow(totalRow);
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const fileSuffix = groupBy.toLowerCase();
-
-    return {
-      buffer: Buffer.from(buffer as ArrayBuffer),
-      mimeType:
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      fileName: `report-transaction-${fileSuffix}.xlsx`,
-    };
-  }
-
-  private async exportToPdf(data: GroupedReportItem[], groupBy: ReportGroupBy) {
-    const doc = new PDFDocument({ margin: 40, size: 'A4' });
-    const chunks: Buffer[] = [];
-
-    doc.on('data', (chunk) => chunks.push(chunk));
-
-    const result = new Promise<Buffer>((resolve) => {
-      doc.on('end', () => {
-        resolve(Buffer.concat(chunks));
-      });
-    });
-
-    doc.fontSize(16).text('Laporan Transaksi', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text(`Group By: ${groupBy}`);
-    doc.moveDown();
-
-    doc
-      .fontSize(10)
-      .text(
-        'Periode | Total Trx | Total Amount | Discount | Grand Total | Dibayar | Kembalian',
-      );
-    doc.moveDown(0.5);
-
-    data.forEach((item) => {
-      doc.text(
-        `${item.period} | ${item.totalTransaction} | ${item.totalAmount.toFixed(2)} | ${item.totalDiscount.toFixed(2)} | ${item.totalGrandTotal.toFixed(2)} | ${item.totalPaidAmount.toFixed(2)} | ${item.totalChangeAmount.toFixed(2)}`,
-      );
-    });
-
-    const totals = {
-      totalTransaction: data.reduce(
-        (acc, item) => acc + item.totalTransaction,
-        0,
-      ),
-      totalAmount: data.reduce((acc, item) => acc + item.totalAmount, 0),
-      totalDiscount: data.reduce((acc, item) => acc + item.totalDiscount, 0),
-      totalGrandTotal: data.reduce(
-        (acc, item) => acc + item.totalGrandTotal,
-        0,
-      ),
-      totalPaidAmount: data.reduce(
-        (acc, item) => acc + item.totalPaidAmount,
-        0,
-      ),
-      totalChangeAmount: data.reduce(
-        (acc, item) => acc + item.totalChangeAmount,
-        0,
-      ),
-    };
-
-    doc.moveDown();
-    doc.text(
-      `TOTAL | ${totals.totalTransaction} | ${totals.totalAmount.toFixed(2)} | ${totals.totalDiscount.toFixed(2)} | ${totals.totalGrandTotal.toFixed(2)} | ${totals.totalPaidAmount.toFixed(2)} | ${totals.totalChangeAmount.toFixed(2)}`,
-    );
-
-    doc.end();
-
-    const fileSuffix = groupBy.toLowerCase();
-    const buffer = await result;
-
-    return {
-      buffer,
-      mimeType: 'application/pdf',
-      fileName: `report-transaction-${fileSuffix}.pdf`,
     };
   }
 
@@ -474,7 +259,6 @@ export class ReportTransactionService {
 
   async exportReport(query: ExportReportTransactionDto, storeId: string) {
     const result = await this.buildGeneralReportRows(query, storeId);
-
     const format = query.format || ReportExportFormat.EXCEL;
 
     if (format === ReportExportFormat.PDF) {
@@ -504,7 +288,7 @@ export class ReportTransactionService {
 
     data.forEach((item) => worksheet.addRow(item));
 
-    const totalRow = {
+    worksheet.addRow({
       productName: 'TOTAL',
       barcode: '',
       categoryName: '',
@@ -516,9 +300,7 @@ export class ReportTransactionService {
       boughtTotal: data.reduce((acc, item) => acc + item.boughtTotal, 0),
       soldTotal: data.reduce((acc, item) => acc + item.soldTotal, 0),
       profit: data.reduce((acc, item) => acc + item.profit, 0),
-    };
-
-    worksheet.addRow(totalRow);
+    });
 
     const buffer = await workbook.xlsx.writeBuffer();
 
@@ -526,7 +308,7 @@ export class ReportTransactionService {
       buffer: Buffer.from(buffer as ArrayBuffer),
       mimeType:
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      fileName: `report-general.xlsx`,
+      fileName: 'report-general.xlsx',
     };
   }
 

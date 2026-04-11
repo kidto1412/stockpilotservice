@@ -5,7 +5,7 @@ import {
   ExportReportTransactionDto,
   GeneralProductReportQueryDto,
 } from './dto/report-transaction.dto';
-import { ReportTransactionService } from './report-transaction.service';
+import { ReportTransactionService } from './report-transaction.service.js';
 
 @Controller('report-transaction')
 export class ReportTransactionController {
