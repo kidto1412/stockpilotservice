@@ -7,6 +7,55 @@ import { DashboardSummaryQueryDto } from './dto/dashboard-summary.dto';
 export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
+  private async getSalesMetrics(
+    storeId: string,
+    query: DashboardSummaryQueryDto,
+  ) {
+    const transactionWhere = this.buildTransactionWhere(storeId, query);
+
+    const [transactionItems, transactionAggregate] = await Promise.all([
+      this.prisma.transactionItem.findMany({
+        where: {
+          transaction: transactionWhere,
+        },
+        select: {
+          quantity: true,
+          product: {
+            select: {
+              cost: true,
+            },
+          },
+        },
+      }),
+      this.prisma.transaction.aggregate({
+        where: transactionWhere,
+        _sum: {
+          grandTotal: true,
+        },
+      }),
+    ]);
+
+    const totalSold = transactionItems.reduce(
+      (acc, item) => acc + item.quantity,
+      0,
+    );
+
+    const totalCost = transactionItems.reduce(
+      (acc, item) => acc + item.product.cost * item.quantity,
+      0,
+    );
+
+    const totalSalesAmount = transactionAggregate._sum.grandTotal || 0;
+    const totalProfit = totalSalesAmount - totalCost;
+
+    return {
+      totalSold,
+      totalCost,
+      totalSalesAmount,
+      totalProfit,
+    };
+  }
+
   private buildTransactionWhere(
     storeId: string,
     query: DashboardSummaryQueryDto,
@@ -34,55 +83,17 @@ export class DashboardService {
   }
 
   async getSummary(storeId: string, query: DashboardSummaryQueryDto) {
-    const transactionWhere = this.buildTransactionWhere(storeId, query);
-
-    const [
-      totalProducts,
-      totalCategories,
-      transactionItems,
-      transactionAggregate,
-    ] = await Promise.all([
+    const [totalProducts, totalCategories, salesMetrics] = await Promise.all([
       this.prisma.product.count({ where: { storeId } }),
       this.prisma.category.count({ where: { storeId } }),
-      this.prisma.transactionItem.findMany({
-        where: {
-          transaction: transactionWhere,
-        },
-        select: {
-          quantity: true,
-          subtotal: true,
-          product: {
-            select: {
-              cost: true,
-            },
-          },
-        },
-      }),
-      this.prisma.transaction.aggregate({
-        where: transactionWhere,
-        _sum: {
-          grandTotal: true,
-        },
-      }),
+      this.getSalesMetrics(storeId, query),
     ]);
-
-    const totalSold = transactionItems.reduce(
-      (acc, item) => acc + item.quantity,
-      0,
-    );
-
-    const totalCost = transactionItems.reduce(
-      (acc, item) => acc + item.product.cost * item.quantity,
-      0,
-    );
-
-    const totalSalesAmount = transactionAggregate._sum.grandTotal || 0;
 
     return {
       totalProducts,
       totalCategories,
-      totalSold,
-      totalSalesAmount,
+      totalSold: salesMetrics.totalSold,
+      totalSalesAmount: salesMetrics.totalSalesAmount,
     };
   }
 }

@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import {
   CreateTransactionDto,
   SalesTransactionQueryDto,
+  SalesSummaryQueryDto,
   TransactionQueryDto,
 } from './dto/transaction.dto';
 import { paginateResponse } from 'src/utils/response.util';
@@ -478,6 +479,118 @@ export class TransactionService {
     ]);
 
     return paginateResponse(data, page, size, total);
+  }
+
+  async getSalesSummary(query: SalesSummaryQueryDto, storeId: string) {
+    const where: Prisma.TransactionWhereInput = {
+      storeId,
+      status: 'COMPLETED',
+    };
+
+    if (query.startDate || query.endDate) {
+      where.createdAt = {};
+
+      if (query.startDate) {
+        where.createdAt.gte = new Date(query.startDate);
+      }
+
+      if (query.endDate) {
+        const endDate = new Date(query.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    const [products, transactions] = await Promise.all([
+      this.prisma.transactionItem.groupBy({
+        by: ['productId'],
+        where: {
+          transaction: where,
+        },
+        _sum: {
+          quantity: true,
+          subtotal: true,
+        },
+      }),
+      this.prisma.transaction.findMany({
+        where,
+        select: {
+          grandTotal: true,
+          transactionItems: {
+            select: {
+              quantity: true,
+              price: true,
+              subtotal: true,
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  cost: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const productIds = products.map((item) => item.productId);
+    const productMeta = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, storeId },
+      select: {
+        id: true,
+        name: true,
+        barcode: true,
+        cost: true,
+      },
+    });
+
+    const productMap = new Map(productMeta.map((item) => [item.id, item]));
+
+    const soldProducts = products
+      .map((item) => {
+        const product = productMap.get(item.productId);
+        if (!product) return null;
+
+        const totalQuantity = item._sum.quantity || 0;
+        const totalRevenue = item._sum.subtotal || 0;
+        const totalCost = product.cost * totalQuantity;
+
+        return {
+          productId: product.id,
+          productName: product.name,
+          barcode: product.barcode,
+          totalQuantity,
+          totalRevenue,
+          totalCost,
+          totalProfit: totalRevenue - totalCost,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.totalQuantity - a.totalQuantity);
+
+    const totalSalesAmount = transactions.reduce(
+      (acc, item) => acc + item.grandTotal,
+      0,
+    );
+
+    const totalCost = transactions.reduce((acc, transaction) => {
+      const transactionCost = transaction.transactionItems.reduce(
+        (itemAcc, item) => itemAcc + item.product.cost * item.quantity,
+        0,
+      );
+
+      return acc + transactionCost;
+    }, 0);
+
+    const totalProfit = totalSalesAmount - totalCost;
+
+    return {
+      totalSalesAmount,
+      totalCost,
+      totalProfit,
+      soldProducts,
+    };
   }
 
   async findOne(id: string, storeId: string) {

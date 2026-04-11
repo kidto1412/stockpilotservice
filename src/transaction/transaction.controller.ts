@@ -4,6 +4,7 @@ import { TransactionService } from './transaction.service';
 import {
   CreateTransactionDto,
   SalesTransactionQueryDto,
+  SalesSummaryQueryDto,
   TransactionQueryDto,
 } from './dto/transaction.dto';
 
@@ -31,6 +32,14 @@ export class TransactionController {
     @StoreId() storeId: string,
   ) {
     return this.transactionService.findSalesPagination(query, storeId);
+  }
+
+  @Get('sales/summary')
+  getSalesSummary(
+    @Query() query: SalesSummaryQueryDto,
+    @StoreId() storeId: string,
+  ) {
+    return this.transactionService.getSalesSummary(query, storeId);
   }
 
   @Get(':id')

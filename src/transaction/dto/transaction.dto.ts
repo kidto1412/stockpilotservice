@@ -88,3 +88,13 @@ export class SalesTransactionQueryDto extends TransactionQueryDto {
   @IsEnum(PaymentMethod)
   paymentMethod?: PaymentMethod;
 }
+
+export class SalesSummaryQueryDto extends TransactionQueryDto {
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
