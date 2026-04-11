@@ -501,72 +501,67 @@ export class TransactionService {
       }
     }
 
-    const [products, transactions] = await Promise.all([
-      this.prisma.transactionItem.groupBy({
-        by: ['productId'],
+    const [transactionItems, transactions] = await Promise.all([
+      this.prisma.transactionItem.findMany({
         where: {
           transaction: where,
         },
-        _sum: {
+        select: {
           quantity: true,
           subtotal: true,
+          product: {
+            select: {
+              id: true,
+              name: true,
+              barcode: true,
+              cost: true,
+            },
+          },
         },
       }),
       this.prisma.transaction.findMany({
         where,
         select: {
           grandTotal: true,
-          transactionItems: {
-            select: {
-              quantity: true,
-              price: true,
-              subtotal: true,
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  cost: true,
-                },
-              },
-            },
-          },
         },
       }),
     ]);
 
-    const productIds = products.map((item) => item.productId);
-    const productMeta = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, storeId },
-      select: {
-        id: true,
-        name: true,
-        barcode: true,
-        cost: true,
-      },
-    });
+    const soldProductMap = new Map<
+      string,
+      {
+        productId: string;
+        productName: string;
+        barcode: string | null;
+        totalQuantity: number;
+        totalRevenue: number;
+        totalCost: number;
+      }
+    >();
 
-    const productMap = new Map(productMeta.map((item) => [item.id, item]));
+    for (const item of transactionItems) {
+      const product = item.product;
+      const current = soldProductMap.get(product.id) || {
+        productId: product.id,
+        productName: product.name,
+        barcode: product.barcode,
+        totalQuantity: 0,
+        totalRevenue: 0,
+        totalCost: 0,
+      };
 
-    const soldProducts = products
-      .map((item) => {
-        const product = productMap.get(item.productId);
-        if (!product) return null;
+      current.totalQuantity += item.quantity;
+      current.totalRevenue += item.subtotal || 0;
+      current.totalCost += product.cost * item.quantity;
 
-        const totalQuantity = item._sum.quantity || 0;
-        const totalRevenue = item._sum.subtotal || 0;
-        const totalCost = product.cost * totalQuantity;
+      soldProductMap.set(product.id, current);
+    }
 
-        return {
-          productId: product.id,
-          productName: product.name,
-          barcode: product.barcode,
-          totalQuantity,
-          totalRevenue,
-          totalCost,
-          totalProfit: totalRevenue - totalCost,
-        };
-      })
-      .filter(Boolean)
+    const soldProducts = Array.from(soldProductMap.values())
+      .map((item) => ({
+        ...item,
+        totalProfit: item.totalRevenue - item.totalCost,
+      }))
       .sort((a, b) => b.totalQuantity - a.totalQuantity);
 
     const totalSalesAmount = transactions.reduce(
@@ -574,14 +569,10 @@ export class TransactionService {
       0,
     );
 
-    const totalCost = transactions.reduce((acc, transaction) => {
-      const transactionCost = transaction.transactionItems.reduce(
-        (itemAcc, item) => itemAcc + item.product.cost * item.quantity,
-        0,
-      );
-
-      return acc + transactionCost;
-    }, 0);
+    const totalCost = soldProducts.reduce(
+      (acc, item) => acc + item.totalCost,
+      0,
+    );
 
     const totalProfit = totalSalesAmount - totalCost;
 

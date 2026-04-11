@@ -1,5 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsOptional, IsPositive } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsPositive,
+  IsUUID,
+} from 'class-validator';
 import { PaymentMethod, TransactionStatus } from '@prisma/client';
 
 export enum ReportGroupBy {
@@ -41,7 +47,7 @@ export class ReportTransactionQueryDto {
   status?: TransactionStatus;
 }
 
-export class ExportReportTransactionDto extends ReportTransactionQueryDto {
+export class ExportReportTransactionDto extends GeneralProductReportQueryDto {
   @IsOptional()
   @IsEnum(ReportGroupBy)
   groupBy?: ReportGroupBy;
@@ -49,4 +55,10 @@ export class ExportReportTransactionDto extends ReportTransactionQueryDto {
   @IsOptional()
   @IsEnum(ReportExportFormat)
   format?: ReportExportFormat;
+}
+
+export class GeneralProductReportQueryDto extends ReportTransactionQueryDto {
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
 }
