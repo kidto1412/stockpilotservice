@@ -438,23 +438,25 @@ export class TransactionService {
       }
     }
 
-    const [data, total] = await Promise.all([
+    const [data, total, summaryItems] = await Promise.all([
       this.prisma.transaction.findMany({
         where,
         ...(skip !== undefined ? { skip } : {}),
         ...(requestedSize !== undefined ? { take: requestedSize } : {}),
         orderBy: { createdAt: 'desc' },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-            },
-          },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          createdAt: true,
+          status: true,
+          paymentMethod: true,
+          discount: true,
+          changeAmount: true,
+          isSynced: true,
+          paidAmount: true,
+          grandTotal: true,
           cashier: {
             select: {
-              id: true,
               fullName: true,
               username: true,
             },
@@ -462,15 +464,29 @@ export class TransactionService {
           transactionItems: {
             select: {
               id: true,
-              productId: true,
               quantity: true,
               price: true,
               subtotal: true,
+              discount: {
+                select: {
+                  id: true,
+                  name: true,
+                  valueType: true,
+                  value: true,
+                },
+              },
               product: {
                 select: {
                   id: true,
                   name: true,
-                  barcode: true,
+                  price: true,
+                  cost: true,
+                  category: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
+                  },
                 },
               },
             },
@@ -478,12 +494,96 @@ export class TransactionService {
         },
       }),
       this.prisma.transaction.count({ where }),
+      this.prisma.transactionItem.findMany({
+        where: { transaction: where },
+        select: {
+          quantity: true,
+          subtotal: true,
+          product: {
+            select: {
+              cost: true,
+            },
+          },
+        },
+      }),
     ]);
 
     const effectivePage = requestedSize !== undefined ? page : 1;
     const effectiveSize = requestedSize ?? (total > 0 ? total : 1);
 
-    return paginateResponse(data, effectivePage, effectiveSize, total);
+    const content = data.map((trx) => {
+      const items = trx.transactionItems.map((item) => {
+        const originalUnitPrice = item.product.price;
+        const soldUnitPrice = item.price;
+        const quantity = item.quantity;
+
+        return {
+          itemId: item.id,
+          productId: item.product.id,
+          productName: item.product.name,
+          categoryId: item.product.category?.id ?? null,
+          categoryName: item.product.category?.name ?? null,
+          quantity,
+          originalUnitPrice,
+          soldUnitPrice,
+          originalLineTotal: originalUnitPrice * quantity,
+          soldLineTotal: soldUnitPrice * quantity,
+          subtotal: item.subtotal,
+          discount: item.discount
+            ? {
+                id: item.discount.id,
+                name: item.discount.name,
+                valueType: item.discount.valueType,
+                value: item.discount.value,
+              }
+            : null,
+        };
+      });
+
+      return {
+        id: trx.id,
+        invoiceNumber: trx.invoiceNumber,
+        salesDate: trx.createdAt,
+        status: trx.status,
+        paymentMethod: trx.paymentMethod,
+        cashierName: trx.cashier?.fullName ?? trx.cashier?.username ?? null,
+        transactionDiscount: trx.discount ?? 0,
+        changeAmount: trx.changeAmount,
+        isSynced: trx.isSynced,
+        paidAmount: trx.paidAmount,
+        grandTotal: trx.grandTotal,
+        items,
+      };
+    });
+
+    const summary = summaryItems.reduce(
+      (acc, item) => {
+        acc.totalQuantity += item.quantity;
+        acc.totalRevenue += item.subtotal;
+        acc.totalCost += item.product.cost * item.quantity;
+        return acc;
+      },
+      {
+        totalQuantity: 0,
+        totalRevenue: 0,
+        totalCost: 0,
+        totalProfit: 0,
+      },
+    );
+
+    summary.totalProfit = summary.totalRevenue - summary.totalCost;
+
+    const pagination = paginateResponse(
+      content,
+      effectivePage,
+      effectiveSize,
+      total,
+    );
+
+    return {
+      ...pagination,
+      summary,
+    };
   }
 
   async getSalesSummary(query: SalesSummaryQueryDto, storeId: string) {
