@@ -33,6 +33,6 @@ export class ReportTransactionController {
       `attachment; filename="${result.fileName}"`,
     );
 
-    return res.send(result.buffer);
+    res.send(result.buffer);
   }
 }
