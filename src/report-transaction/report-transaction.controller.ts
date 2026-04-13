@@ -25,14 +25,31 @@ export class ReportTransactionController {
     @StoreId() storeId: string,
     @Res() res: Response,
   ) {
-    const result = await this.service.exportReport(query, storeId);
+    console.log('[ReportTransactionController] exportReport query=', query);
 
-    res.setHeader('Content-Type', result.mimeType);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.fileName}"`,
-    );
+    try {
+      const result = await this.service.exportReport(query, storeId);
 
-    res.send(result.buffer);
+      console.log(
+        '[ReportTransactionController] exportReport result=',
+        result.fileName,
+        result.mimeType,
+        result.buffer?.length ?? result.buffer?.byteLength ?? 'unknown',
+      );
+
+      res.setHeader('Content-Type', result.mimeType);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${result.fileName}"`,
+      );
+
+      res.send(result.buffer);
+    } catch (error) {
+      console.error(
+        '[ReportTransactionController] exportReport failed=',
+        error,
+      );
+      throw error;
+    }
   }
 }

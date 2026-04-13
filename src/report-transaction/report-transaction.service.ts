@@ -345,19 +345,48 @@ export class ReportTransactionService {
       worksheet.addRow(totals);
 
       const buffer = await workbook.xlsx.writeBuffer();
+      const rawBuffer = buffer as any;
+      const bufferLength =
+        rawBuffer instanceof Buffer
+          ? rawBuffer.length
+          : rawBuffer instanceof Uint8Array
+            ? rawBuffer.byteLength
+            : rawBuffer instanceof ArrayBuffer
+              ? rawBuffer.byteLength
+              : 0;
 
       this.logger.debug(
-        `exportGeneralToExcel success bufferLength=${(buffer as ArrayBuffer).byteLength}`,
+        `exportGeneralToExcel success bufferType=${rawBuffer?.constructor?.name ?? 'unknown'} bufferLength=${bufferLength}`,
       );
 
+      console.log('[ReportTransactionService] exportGeneralToExcel summary=', {
+        rows: data.length,
+        totals,
+        bufferType: rawBuffer?.constructor?.name ?? 'unknown',
+        bufferLength,
+      });
+
+      const outputBuffer =
+        rawBuffer instanceof Buffer
+          ? rawBuffer
+          : rawBuffer instanceof Uint8Array
+            ? Buffer.from(rawBuffer)
+            : rawBuffer instanceof ArrayBuffer
+              ? Buffer.from(rawBuffer)
+              : Buffer.from([]);
+
       return {
-        buffer: Buffer.from(buffer as ArrayBuffer),
+        buffer: outputBuffer,
         mimeType:
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         fileName: 'report-general.xlsx',
       };
     } catch (error) {
       this.logger.error('exportGeneralToExcel failed', error as Error);
+      console.error(
+        '[ReportTransactionService] exportGeneralToExcel failed=',
+        error,
+      );
       throw error;
     }
   }
