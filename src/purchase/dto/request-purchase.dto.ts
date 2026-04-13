@@ -40,6 +40,11 @@ export class CreatePurchaseDto {
   @Min(0)
   amount: number;
 
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  discount?: number;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PurchaseItemDto)

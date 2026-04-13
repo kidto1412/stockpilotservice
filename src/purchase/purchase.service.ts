@@ -31,13 +31,23 @@ export class PurchaseService {
         totalAmount += item.cost * item.quantity;
       });
 
-      if (dto.amount > totalAmount) {
+      const discount = dto.discount ?? 0;
+
+      if (discount > totalAmount) {
+        throw new BadRequestException(
+          'Diskon pembelian tidak boleh lebih besar dari total pembelian',
+        );
+      }
+
+      const netTotalAmount = totalAmount - discount;
+
+      if (dto.amount > netTotalAmount) {
         throw new BadRequestException(
           'Amount pembelian tidak boleh lebih besar dari total pembelian',
         );
       }
 
-      const remaining = totalAmount - dto.amount;
+      const remaining = netTotalAmount - dto.amount;
       const payableStatus =
         remaining <= 0 ? 'PAID' : dto.amount <= 0 ? 'UNPAID' : 'PARTIAL';
 
@@ -47,7 +57,7 @@ export class PurchaseService {
           supplierId: dto.supplierId,
           invoiceNumber: dto.invoiceNumber,
           note: dto.note,
-          totalAmount,
+          totalAmount: netTotalAmount,
         },
       });
 
@@ -98,7 +108,7 @@ export class PurchaseService {
           storeId,
           supplierId: dto.supplierId,
           purchaseId: purchase.id,
-          totalAmount,
+          totalAmount: netTotalAmount,
           paidAmount: dto.amount,
           remaining,
           status: payableStatus,

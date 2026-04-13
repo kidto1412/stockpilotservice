@@ -23,6 +23,10 @@ export class CreateProductDto {
   @IsString()
   barcode?: string;
 
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
   @IsNotEmpty()
   @Type(() => Number)
   @IsNumber()
