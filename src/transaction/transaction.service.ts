@@ -516,6 +516,9 @@ export class TransactionService {
         const originalUnitPrice = item.product.price;
         const soldUnitPrice = item.price;
         const quantity = item.quantity;
+        const unitCost = item.product.cost;
+        const totalCost = unitCost * quantity;
+        const soldLineTotal = soldUnitPrice * quantity;
 
         return {
           itemId: item.id,
@@ -524,10 +527,13 @@ export class TransactionService {
           categoryId: item.product.category?.id ?? null,
           categoryName: item.product.category?.name ?? null,
           quantity,
+          unitCost,
           originalUnitPrice,
           soldUnitPrice,
           originalLineTotal: originalUnitPrice * quantity,
-          soldLineTotal: soldUnitPrice * quantity,
+          soldLineTotal,
+          totalCost,
+          profit: soldLineTotal - totalCost,
           subtotal: item.subtotal,
           discount: item.discount
             ? {
