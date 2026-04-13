@@ -4,6 +4,8 @@ import {
   IsArray,
   ValidateNested,
   IsNumber,
+  Min,
+  IsDateString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -31,7 +33,12 @@ export class CreatePurchaseDto {
   note?: string;
 
   @IsOptional()
+  @IsDateString()
   dueDate?: Date;
+
+  @IsNumber()
+  @Min(0)
+  amount: number;
 
   @IsArray()
   @ValidateNested({ each: true })

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ForbiddenException,
@@ -29,6 +30,16 @@ export class PurchaseService {
       dto.items.forEach((item) => {
         totalAmount += item.cost * item.quantity;
       });
+
+      if (dto.amount > totalAmount) {
+        throw new BadRequestException(
+          'Amount pembelian tidak boleh lebih besar dari total pembelian',
+        );
+      }
+
+      const remaining = totalAmount - dto.amount;
+      const payableStatus =
+        remaining <= 0 ? 'PAID' : dto.amount <= 0 ? 'UNPAID' : 'PARTIAL';
 
       const purchase = await tx.purchase.create({
         data: {
@@ -88,7 +99,9 @@ export class PurchaseService {
           supplierId: dto.supplierId,
           purchaseId: purchase.id,
           totalAmount,
-          remaining: totalAmount,
+          paidAmount: dto.amount,
+          remaining,
+          status: payableStatus,
           dueDate: dto.dueDate,
         },
       });
