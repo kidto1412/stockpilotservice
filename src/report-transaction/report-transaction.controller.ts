@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Logger, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { StoreId } from 'src/common/decorators/user.decorator';
 import {
@@ -9,6 +9,8 @@ import { ReportTransactionService } from './report-transaction.service.js';
 
 @Controller('report-transaction')
 export class ReportTransactionController {
+  private readonly logger = new Logger(ReportTransactionController.name);
+
   constructor(private readonly service: ReportTransactionService) {}
 
   @Get()
@@ -25,16 +27,15 @@ export class ReportTransactionController {
     @StoreId() storeId: string,
     @Res() res: Response,
   ) {
-    console.log('[ReportTransactionController] exportReport query=', query);
+    this.logger.debug(
+      `exportReport query=${JSON.stringify(query)} storeId=${storeId}`,
+    );
 
     try {
       const result = await this.service.exportReport(query, storeId);
 
-      console.log(
-        '[ReportTransactionController] exportReport result=',
-        result.fileName,
-        result.mimeType,
-        result.buffer?.length ?? result.buffer?.byteLength ?? 'unknown',
+      this.logger.debug(
+        `exportReport result fileName=${result.fileName} mimeType=${result.mimeType} bufferSize=${result.buffer?.length ?? result.buffer?.byteLength ?? 'unknown'}`,
       );
 
       res.setHeader('Content-Type', result.mimeType);
@@ -45,9 +46,9 @@ export class ReportTransactionController {
 
       res.send(result.buffer);
     } catch (error) {
-      console.error(
-        '[ReportTransactionController] exportReport failed=',
-        error,
+      this.logger.error(
+        'exportReport failed',
+        error instanceof Error ? error.stack : String(error),
       );
       throw error;
     }

@@ -13,6 +13,12 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse();
     const request = ctx.getRequest();
 
+    console.error('[GlobalHttpExceptionFilter] exception=', exception);
+
+    if (exception instanceof Error) {
+      console.error('[GlobalHttpExceptionFilter] stack=', exception.stack);
+    }
+
     let status =
       exception instanceof HttpException
         ? exception.getStatus()
