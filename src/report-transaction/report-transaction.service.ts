@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, TransactionStatus } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import PDFDocument = require('pdfkit');
@@ -36,6 +36,8 @@ export interface GeneralProductReportSummary {
 
 @Injectable()
 export class ReportTransactionService {
+  private readonly logger = new Logger(ReportTransactionService.name);
+
   constructor(private prisma: PrismaService) {}
 
   private buildWhere(
@@ -276,10 +278,18 @@ export class ReportTransactionService {
   }
 
   async exportReport(query: ExportReportTransactionDto, storeId: string) {
+    this.logger.debug(
+      `exportReport start storeId=${storeId} format=${query.format ?? 'undefined'} groupBy=${query.groupBy ?? 'undefined'} startDate=${query.startDate ?? 'undefined'} endDate=${query.endDate ?? 'undefined'}`,
+    );
+
     const result = await this.buildGeneralReportRows(query, storeId);
     const format = query.format || ReportExportFormat.XLSX;
     const normalizedFormat =
       format === ReportExportFormat.EXCEL ? ReportExportFormat.XLSX : format;
+
+    this.logger.debug(
+      `exportReport rows=${result.content.length} summary=${JSON.stringify(result.summary)}`,
+    );
 
     if (normalizedFormat === ReportExportFormat.PDF) {
       return this.exportGeneralToPdf(result.content);
@@ -289,47 +299,67 @@ export class ReportTransactionService {
   }
 
   private async exportGeneralToExcel(data: GeneralProductReportItem[]) {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Report General');
+    this.logger.debug(`exportGeneralToExcel start rows=${data.length}`);
 
-    worksheet.columns = [
-      { header: 'Produk', key: 'productName', width: 24 },
-      { header: 'Barcode', key: 'barcode', width: 18 },
-      { header: 'Kategori', key: 'categoryName', width: 18 },
-      { header: 'Stok Saat Ini', key: 'currentStock', width: 14 },
-      { header: 'Harga Beli', key: 'cost', width: 14 },
-      { header: 'Harga Jual', key: 'price', width: 14 },
-      { header: 'Qty Beli', key: 'boughtQuantity', width: 12 },
-      { header: 'Qty Jual', key: 'soldQuantity', width: 12 },
-      { header: 'Total Beli', key: 'boughtTotal', width: 14 },
-      { header: 'Total Jual', key: 'soldTotal', width: 14 },
-      { header: 'Profit', key: 'profit', width: 14 },
-    ];
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Report General');
 
-    data.forEach((item) => worksheet.addRow(item));
+      worksheet.columns = [
+        { header: 'Produk', key: 'productName', width: 24 },
+        { header: 'Barcode', key: 'barcode', width: 18 },
+        { header: 'Kategori', key: 'categoryName', width: 18 },
+        { header: 'Stok Saat Ini', key: 'currentStock', width: 14 },
+        { header: 'Harga Beli', key: 'cost', width: 14 },
+        { header: 'Harga Jual', key: 'price', width: 14 },
+        { header: 'Qty Beli', key: 'boughtQuantity', width: 12 },
+        { header: 'Qty Jual', key: 'soldQuantity', width: 12 },
+        { header: 'Total Beli', key: 'boughtTotal', width: 14 },
+        { header: 'Total Jual', key: 'soldTotal', width: 14 },
+        { header: 'Profit', key: 'profit', width: 14 },
+      ];
 
-    worksheet.addRow({
-      productName: 'TOTAL',
-      barcode: '',
-      categoryName: '',
-      currentStock: data.reduce((acc, item) => acc + item.currentStock, 0),
-      cost: 0,
-      price: 0,
-      boughtQuantity: data.reduce((acc, item) => acc + item.boughtQuantity, 0),
-      soldQuantity: data.reduce((acc, item) => acc + item.soldQuantity, 0),
-      boughtTotal: data.reduce((acc, item) => acc + item.boughtTotal, 0),
-      soldTotal: data.reduce((acc, item) => acc + item.soldTotal, 0),
-      profit: data.reduce((acc, item) => acc + item.profit, 0),
-    });
+      data.forEach((item) => worksheet.addRow(item));
 
-    const buffer = await workbook.xlsx.writeBuffer();
+      const totals = {
+        productName: 'TOTAL',
+        barcode: '',
+        categoryName: '',
+        currentStock: data.reduce((acc, item) => acc + item.currentStock, 0),
+        cost: 0,
+        price: 0,
+        boughtQuantity: data.reduce(
+          (acc, item) => acc + item.boughtQuantity,
+          0,
+        ),
+        soldQuantity: data.reduce((acc, item) => acc + item.soldQuantity, 0),
+        boughtTotal: data.reduce((acc, item) => acc + item.boughtTotal, 0),
+        soldTotal: data.reduce((acc, item) => acc + item.soldTotal, 0),
+        profit: data.reduce((acc, item) => acc + item.profit, 0),
+      };
 
-    return {
-      buffer: Buffer.from(buffer as ArrayBuffer),
-      mimeType:
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      fileName: 'report-general.xlsx',
-    };
+      this.logger.debug(
+        `exportGeneralToExcel totals=${JSON.stringify(totals)}`,
+      );
+
+      worksheet.addRow(totals);
+
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      this.logger.debug(
+        `exportGeneralToExcel success bufferLength=${(buffer as ArrayBuffer).byteLength}`,
+      );
+
+      return {
+        buffer: Buffer.from(buffer as ArrayBuffer),
+        mimeType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        fileName: 'report-general.xlsx',
+      };
+    } catch (error) {
+      this.logger.error('exportGeneralToExcel failed', error as Error);
+      throw error;
+    }
   }
 
   private async exportGeneralToPdf(data: GeneralProductReportItem[]) {
