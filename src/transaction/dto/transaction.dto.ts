@@ -19,6 +19,13 @@ export enum SalesChartGroupBy {
   YEARLY = 'YEARLY',
 }
 
+export enum SalesStatusFilter {
+  ALL = 'ALL',
+  DRAFT = 'DRAFT',
+  COMPLETED = 'COMPLETED',
+  CANCELED = 'CANCELED',
+}
+
 export class CreateTransactionItemDto {
   @IsString()
   productId: string;
@@ -93,6 +100,10 @@ export class SalesTransactionQueryDto extends TransactionQueryDto {
   @IsOptional()
   @IsEnum(PaymentMethod)
   paymentMethod?: PaymentMethod;
+
+  @IsOptional()
+  @IsEnum(SalesStatusFilter)
+  status?: SalesStatusFilter;
 }
 
 export class SalesSummaryQueryDto extends TransactionQueryDto {

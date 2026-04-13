@@ -11,6 +11,7 @@ import {
   CreateTransactionDto,
   SalesChartGroupBy,
   SalesChartQueryDto,
+  SalesStatusFilter,
   SalesTransactionQueryDto,
   SalesSummaryQueryDto,
   TransactionQueryDto,
@@ -26,13 +27,22 @@ export class TransactionService {
       startDate?: string;
       endDate?: string;
       paymentMethod?: Prisma.TransactionWhereInput['paymentMethod'];
+      status?: SalesStatusFilter;
     },
     storeId: string,
+    options?: {
+      defaultStatus?: Prisma.TransactionWhereInput['status'];
+    },
   ): Prisma.TransactionWhereInput {
     const where: Prisma.TransactionWhereInput = {
       storeId,
-      status: 'COMPLETED',
     };
+
+    if (query.status && query.status !== SalesStatusFilter.ALL) {
+      where.status = query.status;
+    } else if (options?.defaultStatus) {
+      where.status = options.defaultStatus;
+    }
 
     if (query.paymentMethod) {
       where.paymentMethod = query.paymentMethod;
@@ -467,7 +477,9 @@ export class TransactionService {
       query.size !== undefined ? Math.max(1, Number(query.size)) : undefined;
     const skip = requestedSize ? (page - 1) * requestedSize : undefined;
 
-    const where = this.buildSalesWhere(query, storeId);
+    const where = this.buildSalesWhere(query, storeId, {
+      defaultStatus: 'COMPLETED',
+    });
 
     const [data, total, summaryItems] = await Promise.all([
       this.prisma.transaction.findMany({
