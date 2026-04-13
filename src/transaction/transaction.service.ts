@@ -9,6 +9,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
   CreateTransactionDto,
+  SalesChartGroupBy,
+  SalesChartQueryDto,
   SalesTransactionQueryDto,
   SalesSummaryQueryDto,
   TransactionQueryDto,
@@ -18,6 +20,56 @@ import { paginateResponse } from 'src/utils/response.util';
 @Injectable()
 export class TransactionService {
   constructor(private prisma: PrismaService) {}
+
+  private buildSalesWhere(
+    query: {
+      startDate?: string;
+      endDate?: string;
+      paymentMethod?: Prisma.TransactionWhereInput['paymentMethod'];
+    },
+    storeId: string,
+  ): Prisma.TransactionWhereInput {
+    const where: Prisma.TransactionWhereInput = {
+      storeId,
+      status: 'COMPLETED',
+    };
+
+    if (query.paymentMethod) {
+      where.paymentMethod = query.paymentMethod;
+    }
+
+    if (query.startDate || query.endDate) {
+      where.createdAt = {};
+
+      if (query.startDate) {
+        where.createdAt.gte = new Date(query.startDate);
+      }
+
+      if (query.endDate) {
+        const endDate = new Date(query.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.createdAt.lte = endDate;
+      }
+    }
+
+    return where;
+  }
+
+  private getSalesPeriodLabel(date: Date, groupBy: SalesChartGroupBy) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    if (groupBy === SalesChartGroupBy.YEARLY) {
+      return `${year}`;
+    }
+
+    if (groupBy === SalesChartGroupBy.MONTHLY) {
+      return `${year}-${month}`;
+    }
+
+    return `${year}-${month}-${day}`;
+  }
 
   private getDiscountAmount(
     unitPrice: number,
@@ -415,28 +467,7 @@ export class TransactionService {
       query.size !== undefined ? Math.max(1, Number(query.size)) : undefined;
     const skip = requestedSize ? (page - 1) * requestedSize : undefined;
 
-    const where: Prisma.TransactionWhereInput = {
-      storeId,
-      status: 'COMPLETED',
-    };
-
-    if (query.paymentMethod) {
-      where.paymentMethod = query.paymentMethod;
-    }
-
-    if (query.startDate || query.endDate) {
-      where.createdAt = {};
-
-      if (query.startDate) {
-        where.createdAt.gte = new Date(query.startDate);
-      }
-
-      if (query.endDate) {
-        const endDate = new Date(query.endDate);
-        endDate.setHours(23, 59, 59, 999);
-        where.createdAt.lte = endDate;
-      }
-    }
+    const where = this.buildSalesWhere(query, storeId);
 
     const [data, total, summaryItems] = await Promise.all([
       this.prisma.transaction.findMany({
@@ -499,6 +530,7 @@ export class TransactionService {
         select: {
           quantity: true,
           subtotal: true,
+          price: true,
           product: {
             select: {
               cost: true,
@@ -565,8 +597,13 @@ export class TransactionService {
     const summary = summaryItems.reduce(
       (acc, item) => {
         acc.totalQuantity += item.quantity;
-        acc.totalRevenue += item.subtotal;
-        acc.totalCost += item.product.cost * item.quantity;
+        acc.totalRevenue += item.price * item.quantity;
+        const itemCost = item.product.cost * item.quantity;
+        acc.totalCost += itemCost;
+        const itemProfit = item.price * item.quantity - itemCost;
+        if (itemProfit < 0) {
+          acc.totalLoss += Math.abs(itemProfit);
+        }
         return acc;
       },
       {
@@ -574,6 +611,7 @@ export class TransactionService {
         totalRevenue: 0,
         totalCost: 0,
         totalProfit: 0,
+        totalLoss: 0,
       },
     );
 
@@ -588,6 +626,95 @@ export class TransactionService {
 
     return {
       ...pagination,
+      summary,
+    };
+  }
+
+  async getSalesProfitLossChart(query: SalesChartQueryDto, storeId: string) {
+    const where = this.buildSalesWhere(query, storeId);
+    const groupBy = query.groupBy || SalesChartGroupBy.DAILY;
+
+    const items = await this.prisma.transactionItem.findMany({
+      where: {
+        transaction: where,
+      },
+      select: {
+        quantity: true,
+        price: true,
+        transaction: {
+          select: {
+            createdAt: true,
+          },
+        },
+        product: {
+          select: {
+            cost: true,
+          },
+        },
+      },
+    });
+
+    const grouped = new Map<
+      string,
+      {
+        period: string;
+        totalRevenue: number;
+        totalCost: number;
+        totalProfit: number;
+        totalLoss: number;
+      }
+    >();
+
+    for (const item of items) {
+      const period = this.getSalesPeriodLabel(
+        item.transaction.createdAt,
+        groupBy,
+      );
+      const revenue = item.price * item.quantity;
+      const cost = item.product.cost * item.quantity;
+      const profit = revenue - cost;
+
+      const current = grouped.get(period) || {
+        period,
+        totalRevenue: 0,
+        totalCost: 0,
+        totalProfit: 0,
+        totalLoss: 0,
+      };
+
+      current.totalRevenue += revenue;
+      current.totalCost += cost;
+      current.totalProfit += profit;
+      if (profit < 0) {
+        current.totalLoss += Math.abs(profit);
+      }
+
+      grouped.set(period, current);
+    }
+
+    const content = Array.from(grouped.values()).sort((a, b) =>
+      a.period.localeCompare(b.period),
+    );
+
+    const summary = content.reduce(
+      (acc, item) => {
+        acc.totalRevenue += item.totalRevenue;
+        acc.totalCost += item.totalCost;
+        acc.totalProfit += item.totalProfit;
+        acc.totalLoss += item.totalLoss;
+        return acc;
+      },
+      {
+        totalRevenue: 0,
+        totalCost: 0,
+        totalProfit: 0,
+        totalLoss: 0,
+      },
+    );
+
+    return {
+      groupBy,
+      content,
       summary,
     };
   }

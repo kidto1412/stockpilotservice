@@ -13,6 +13,12 @@ import {
 } from 'class-validator';
 import { PaymentMethod } from '@prisma/client';
 
+export enum SalesChartGroupBy {
+  DAILY = 'DAILY',
+  MONTHLY = 'MONTHLY',
+  YEARLY = 'YEARLY',
+}
+
 export class CreateTransactionItemDto {
   @IsString()
   productId: string;
@@ -97,4 +103,10 @@ export class SalesSummaryQueryDto extends TransactionQueryDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+}
+
+export class SalesChartQueryDto extends SalesTransactionQueryDto {
+  @IsOptional()
+  @IsEnum(SalesChartGroupBy)
+  groupBy?: SalesChartGroupBy;
 }

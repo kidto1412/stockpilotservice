@@ -3,6 +3,7 @@ import { StoreId, CurrentUser } from 'src/common/decorators/user.decorator';
 import { TransactionService } from './transaction.service';
 import {
   CreateTransactionDto,
+  SalesChartQueryDto,
   SalesTransactionQueryDto,
   SalesSummaryQueryDto,
   TransactionQueryDto,
@@ -40,6 +41,14 @@ export class TransactionController {
     @StoreId() storeId: string,
   ) {
     return this.transactionService.getSalesSummary(query, storeId);
+  }
+
+  @Get('sales/chart')
+  getSalesChart(
+    @Query() query: SalesChartQueryDto,
+    @StoreId() storeId: string,
+  ) {
+    return this.transactionService.getSalesProfitLossChart(query, storeId);
   }
 
   @Get(':id')
