@@ -15,6 +15,7 @@ export enum ReportGroupBy {
 }
 
 export enum ReportExportFormat {
+  XLSX = 'XLSX',
   EXCEL = 'EXCEL',
   PDF = 'PDF',
 }

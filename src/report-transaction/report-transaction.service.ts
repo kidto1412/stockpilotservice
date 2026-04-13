@@ -259,9 +259,11 @@ export class ReportTransactionService {
 
   async exportReport(query: ExportReportTransactionDto, storeId: string) {
     const result = await this.buildGeneralReportRows(query, storeId);
-    const format = query.format || ReportExportFormat.EXCEL;
+    const format = query.format || ReportExportFormat.XLSX;
+    const normalizedFormat =
+      format === ReportExportFormat.EXCEL ? ReportExportFormat.XLSX : format;
 
-    if (format === ReportExportFormat.PDF) {
+    if (normalizedFormat === ReportExportFormat.PDF) {
       return this.exportGeneralToPdf(result.content);
     }
 
