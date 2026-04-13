@@ -127,17 +127,42 @@ export class ReportTransactionService {
 
     const productIds = products.map((product) => product.id);
 
+    const transactionWhere: Prisma.TransactionWhereInput = {
+      storeId,
+      status: TransactionStatus.COMPLETED,
+    };
+
+    if (dateRange) {
+      transactionWhere.createdAt = dateRange;
+    }
+
+    const purchaseWhere: Prisma.PurchaseWhereInput = {
+      storeId,
+    };
+
+    if (dateRange) {
+      purchaseWhere.createdAt = dateRange;
+    }
+
+    const [transactions, purchases] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where: transactionWhere,
+        select: { id: true },
+      }),
+      this.prisma.purchase.findMany({
+        where: purchaseWhere,
+        select: { id: true },
+      }),
+    ]);
+
+    const transactionIds = transactions.map((transaction) => transaction.id);
+    const purchaseIds = purchases.map((purchase) => purchase.id);
+
     const [purchaseItems, transactionItems] = await Promise.all([
       this.prisma.purchaseItem.findMany({
         where: {
           productId: { in: productIds },
-          ...(dateRange
-            ? {
-                purchase: {
-                  createdAt: dateRange,
-                },
-              }
-            : {}),
+          purchaseId: { in: purchaseIds },
         },
         select: {
           productId: true,
@@ -148,14 +173,7 @@ export class ReportTransactionService {
       this.prisma.transactionItem.findMany({
         where: {
           productId: { in: productIds },
-          transaction: {
-            status: TransactionStatus.COMPLETED,
-            ...(dateRange
-              ? {
-                  createdAt: dateRange,
-                }
-              : {}),
-          },
+          transactionId: { in: transactionIds },
         },
         select: {
           productId: true,
