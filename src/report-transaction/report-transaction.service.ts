@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, TransactionStatus } from '@prisma/client';
-import ExcelJS from 'exceljs';
+import * as ExcelJS from 'exceljs';
 import PDFDocument = require('pdfkit');
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
