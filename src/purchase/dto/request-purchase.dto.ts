@@ -13,11 +13,18 @@ class PurchaseItemDto {
   @IsString()
   productId: string;
 
+  @Type(() => Number)
   @IsNumber()
   quantity: number;
 
+  @Type(() => Number)
   @IsNumber()
   cost: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  sellingPrice?: number;
 }
 
 export class CreatePurchaseDto {

@@ -89,6 +89,10 @@ export class PurchaseService {
             stock: {
               increment: item.quantity,
             },
+            cost: item.cost,
+            ...(item.sellingPrice !== undefined
+              ? { price: item.sellingPrice }
+              : {}),
           },
         });
 

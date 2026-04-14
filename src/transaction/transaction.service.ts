@@ -847,6 +847,86 @@ export class TransactionService {
     };
   }
 
+  async scanSalesProduct(
+    barcode: string,
+    storeId: string,
+    currentQuantity?: number,
+  ) {
+    const normalizedBarcode = barcode?.trim();
+
+    if (!normalizedBarcode) {
+      throw new BadRequestException('Barcode wajib diisi');
+    }
+
+    if (
+      currentQuantity !== undefined &&
+      (!Number.isFinite(currentQuantity) || currentQuantity < 0)
+    ) {
+      throw new BadRequestException('currentQuantity tidak valid');
+    }
+
+    const product = await this.prisma.product.findFirst({
+      where: {
+        storeId,
+        barcode: normalizedBarcode,
+      },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        productDiscounts: {
+          include: {
+            discount: {
+              select: {
+                id: true,
+                name: true,
+                valueType: true,
+                value: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(
+        'Produk dengan barcode tersebut tidak ditemukan',
+      );
+    }
+
+    let bestDiscount: {
+      id: string;
+      name: string;
+      valueType: 'PERCENT' | 'AMOUNT';
+      value: number;
+    } | null = null;
+    let bestDiscountAmount = 0;
+
+    for (const relation of product.productDiscounts) {
+      const discount = relation.discount;
+      const amount = this.getDiscountAmount(product.price, 1, discount);
+
+      if (amount > bestDiscountAmount) {
+        bestDiscount = discount;
+        bestDiscountAmount = amount;
+      }
+    }
+
+    const quantity =
+      currentQuantity !== undefined ? Math.floor(currentQuantity) + 1 : 1;
+
+    return {
+      productId: product.id,
+      quantity,
+      price: product.price,
+      discountId: bestDiscount?.id,
+    };
+  }
+
   async findOne(id: string, storeId: string) {
     const transaction = await this.prisma.transaction.findUnique({
       where: { id },

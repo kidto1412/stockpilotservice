@@ -51,6 +51,22 @@ export class TransactionController {
     return this.transactionService.getSalesProfitLossChart(query, storeId);
   }
 
+  @Get('sales/scan')
+  scanSalesProduct(
+    @Query('barcode') barcode: string,
+    @Query('currentQuantity') currentQuantity: string | undefined,
+    @StoreId() storeId: string,
+  ) {
+    const parsedCurrentQuantity =
+      currentQuantity !== undefined ? Number(currentQuantity) : undefined;
+
+    return this.transactionService.scanSalesProduct(
+      barcode,
+      storeId,
+      parsedCurrentQuantity,
+    );
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @StoreId() storeId: string) {
     return this.transactionService.findOne(id, storeId);
