@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, MessageEvent } from '@nestjs/common';
 import {
   AutoRecommendationRequestDto,
   LiquiditySweepSignal,
@@ -6,6 +6,7 @@ import {
   StockAnalysisRequestDto,
   TrainMlModelRequestDto,
 } from './app.dto';
+import { Observable, from, map, switchMap, catchError, of, timer } from 'rxjs';
 
 type MarketBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 
@@ -51,13 +52,14 @@ export class AppService {
   getInfo() {
     return {
       appName: 'StockPilot IDX Analyzer',
-      version: '1.1.0',
+      version: '1.2.0',
       description:
         'API rekomendasi saham Indonesia berbasis indikator teknikal, liquidity sweep, dan bid-offer.',
       endpoints: {
         recommendation: 'POST /stock-analysis/recommendation',
         recommendationAuto: 'POST /stock-analysis/recommendation/auto',
         marketData: 'GET /stock-analysis/market-data/:symbol',
+        stream: 'GET /stock-analysis/stream/:symbol',
         tradingView: 'GET /stock-analysis/tradingview/:symbol',
         trainMl: 'POST /stock-analysis/ml/train',
       },
@@ -93,10 +95,16 @@ export class AppService {
     const livePrice =
       quoteData?.regularMarketPrice ?? quoteData?.postMarketPrice ?? quoteData?.preMarketPrice;
     const closes = chartData.closes.slice();
+    const opens = chartData.opens.slice();
+    const highs = chartData.highs.slice();
+    const lows = chartData.lows.slice();
     const volumes = chartData.volumes.slice();
 
     if (typeof livePrice === 'number' && livePrice > 0) {
       closes.push(livePrice);
+      opens.push(opens.length ? opens[opens.length - 1] : livePrice);
+      highs.push(highs.length ? Math.max(highs[highs.length - 1], livePrice) : livePrice);
+      lows.push(lows.length ? Math.min(lows[lows.length - 1], livePrice) : livePrice);
       volumes.push(volumes.length ? volumes[volumes.length - 1] : 0);
     }
 
@@ -133,6 +141,13 @@ export class AppService {
         volumeRatio: this.round(volumeRatio),
         ema20: this.round(ema20),
         ema50: this.round(ema50),
+      },
+      candles: {
+        open: this.round(opens[opens.length - 1]),
+        high: this.round(highs[highs.length - 1]),
+        low: this.round(lows[lows.length - 1]),
+        previousHigh: this.round(this.maxFromSeries(highs, 20)),
+        previousLow: this.round(this.minFromSeries(lows, 20)),
       },
       source: {
         provider: 'Yahoo Finance',
@@ -178,43 +193,188 @@ export class AppService {
       (value: number | null) => typeof value === 'number',
     ) as number[];
 
+    const opens = (result.indicators.quote[0].open || []).filter(
+      (value: number | null) => typeof value === 'number',
+    ) as number[];
+
+    const highs = (result.indicators.quote[0].high || []).filter(
+      (value: number | null) => typeof value === 'number',
+    ) as number[];
+
+    const lows = (result.indicators.quote[0].low || []).filter(
+      (value: number | null) => typeof value === 'number',
+    ) as number[];
+
     const volumes = (result.indicators.quote[0].volume || []).filter(
       (value: number | null) => typeof value === 'number',
     ) as number[];
 
     return {
       closes,
+      opens,
+      highs,
+      lows,
       volumes,
-      lastTimestamp: result?.meta?.regularMarketTime ?? result?.timestamp?.at?.(-1),
+      lastTimestamp:
+        result?.meta?.regularMarketTime ??
+        (Array.isArray(result?.timestamp) ? result.timestamp[result.timestamp.length - 1] : null),
     };
   }
 
-  private async fetchYahooWithFallback(url: string) {
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Referer: 'https://finance.yahoo.com/',
-        Origin: 'https://finance.yahoo.com',
+  private async buildRealtimeRecommendation(
+    symbol: string,
+    options?: {
+      tradingViewIndicators?: string[];
+      foreignFlowBillion?: number;
+      brokerNetBuyTop3Billion?: number;
+      strategyStyle?: StrategyStyle;
+    },
+  ) {
+    const marketData = await this.getMarketData(symbol);
+    const autoSignals = this.deriveRealtimeSignals(marketData);
+
+    const recommendationPayload: StockAnalysisRequestDto = {
+      symbol: marketData.symbol,
+      closePrice: marketData.closePrice,
+      rsi: marketData.indicators.rsi,
+      macdHistogram: marketData.indicators.macdHistogram,
+      volumeRatio: marketData.indicators.volumeRatio,
+      liquiditySweep: autoSignals.liquiditySweep,
+      bidOfferImbalance: autoSignals.bidOfferImbalance,
+      ema20: marketData.indicators.ema20,
+      ema50: marketData.indicators.ema50,
+      foreignFlowBillion: options?.foreignFlowBillion ?? 0,
+      brokerNetBuyTop3Billion: options?.brokerNetBuyTop3Billion ?? 0,
+      tradingViewIndicators: options?.tradingViewIndicators,
+    };
+
+    const recommendation = this.generateRecommendation(recommendationPayload);
+
+    return {
+      type: 'realtime-recommendation',
+      symbol: marketData.symbol,
+      updatedAt: new Date().toISOString(),
+      marketData,
+      realtimeSignals: autoSignals,
+      recommendation: {
+        ...recommendation,
+        preferredStyle:
+          options?.strategyStyle ?? this.pickPreferredStyle(recommendation.marketBias),
       },
-    });
+    };
+  }
 
-    if (!response.ok) {
-      const isRateLimit = response.status === 429;
+  private deriveRealtimeSignals(marketData: any) {
+    const closePrice = marketData.closePrice;
+    const ema20 = marketData.indicators.ema20;
+    const ema50 = marketData.indicators.ema50;
+    const rsi = marketData.indicators.rsi;
+    const volumeRatio = marketData.indicators.volumeRatio;
+    const currentHigh = marketData.candles?.high ?? closePrice;
+    const currentLow = marketData.candles?.low ?? closePrice;
+    const previousHigh = marketData.candles?.previousHigh ?? closePrice;
+    const previousLow = marketData.candles?.previousLow ?? closePrice;
 
-      if (isRateLimit) {
-        throw new BadRequestException(
-          'Provider rate limit tercapai. Gunakan cache yang sudah ada atau coba lagi beberapa saat.',
-        );
+    const bullishSweep =
+      currentLow < previousLow && closePrice > previousLow && closePrice > ema20;
+    const bearishSweep =
+      currentHigh > previousHigh && closePrice < previousHigh && closePrice < ema20;
+
+    const liquiditySweep: LiquiditySweepSignal = bullishSweep
+      ? LiquiditySweepSignal.BULLISH
+      : bearishSweep
+        ? LiquiditySweepSignal.BEARISH
+        : LiquiditySweepSignal.NONE;
+
+    const trendBias =
+      closePrice > ema20 && ema20 > ema50 ? 1 : closePrice < ema20 && ema20 < ema50 ? -1 : 0;
+    const momentumBias = rsi > 60 ? 0.3 : rsi < 40 ? -0.3 : 0;
+    const volumeBias = volumeRatio > 1.2 ? 0.2 : volumeRatio < 0.8 ? -0.2 : 0;
+    const sweepBias =
+      liquiditySweep === LiquiditySweepSignal.BULLISH
+        ? 0.25
+        : liquiditySweep === LiquiditySweepSignal.BEARISH
+          ? -0.25
+          : 0;
+
+    const bidOfferImbalance = this.clamp(
+      trendBias * 0.45 + momentumBias + volumeBias + sweepBias,
+      -1,
+      1,
+    );
+
+    return {
+      liquiditySweep,
+      bidOfferImbalance: this.round(bidOfferImbalance),
+      reason:
+        liquiditySweep === LiquiditySweepSignal.BULLISH
+          ? 'Likuiditas bawah tersapu lalu harga reclaim level sebelumnya.'
+          : liquiditySweep === LiquiditySweepSignal.BEARISH
+            ? 'Likuiditas atas tersapu lalu harga gagal bertahan di atas level sebelumnya.'
+            : 'Tidak ada sweep yang jelas dari candle intraday terakhir.',
+    };
+  }
+
+  private pickPreferredStyle(bias: string): StrategyStyle {
+    if (bias === 'BULLISH') return 'DAY_TRADING';
+    if (bias === 'BEARISH') return 'SCALPING';
+    return 'SWING_TRADING';
+  }
+
+  private async fetchYahooWithFallback(url: string) {
+    const candidates = [
+      url,
+      url.replace('query1.finance.yahoo.com', 'query2.finance.yahoo.com'),
+    ];
+
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const response = await fetch(candidate, {
+            headers: {
+              Accept: 'application/json',
+              'User-Agent': 'curl/7.68.0',
+              Referer: 'https://finance.yahoo.com/',
+              Origin: 'https://finance.yahoo.com',
+              'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+              Connection: 'keep-alive',
+            },
+          });
+
+          if (!response.ok) {
+            if (response.status === 429) {
+              lastError = new BadRequestException(
+                'Provider rate limit tercapai. Gunakan cache yang sudah ada atau coba lagi beberapa saat.',
+              );
+              await this.delay(500 * (attempt + 1));
+              continue;
+            }
+
+            lastError = new BadRequestException(
+              `Gagal ambil data pasar. Status: ${response.status}`,
+            );
+            break;
+          }
+
+          return response;
+        } catch (error) {
+          lastError = error;
+          await this.delay(500 * (attempt + 1));
+        }
       }
-
-      throw new BadRequestException(
-        `Gagal ambil data pasar. Status: ${response.status}`,
-      );
     }
 
-    return response;
+    throw lastError instanceof BadRequestException
+      ? lastError
+      : new BadRequestException(
+          'Provider Yahoo Finance tidak merespons. Coba lagi beberapa saat.',
+        );
+  }
+
+  private async delay(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   getTradingViewConfig(symbol: string, indicators?: string[]) {
@@ -231,6 +391,37 @@ export class AppService {
       indicators: parsedIndicators,
       chartUrl: `https://www.tradingview.com/chart/?symbol=IDX%3A${encodeURIComponent(cleanSymbol)}`,
     };
+  }
+
+  streamRealtimeRecommendation(
+    symbol: string,
+    options?: {
+      intervalMs?: number;
+      tradingViewIndicators?: string[];
+      foreignFlowBillion?: number;
+      brokerNetBuyTop3Billion?: number;
+      strategyStyle?: StrategyStyle;
+    },
+  ): Observable<MessageEvent> {
+    const intervalMs = Math.max(5000, options?.intervalMs ?? 15000);
+
+    return timer(0, intervalMs).pipe(
+      switchMap(() =>
+        from(this.buildRealtimeRecommendation(symbol, options)).pipe(
+          map((payload) => ({ data: payload })),
+          catchError((error) =>
+            of({
+              data: {
+                type: 'error',
+                symbol: this.normalizeIdxSymbol(symbol),
+                message:
+                  error instanceof Error ? error.message : 'Realtime stream gagal',
+              },
+            }),
+          ),
+        ),
+      ),
+    );
   }
 
   async generateAutoRecommendation(payload: AutoRecommendationRequestDto) {
@@ -529,6 +720,10 @@ export class AppService {
     return Math.round(value * 100) / 100;
   }
 
+  private clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+  }
+
   private normalizeIdxSymbol(symbol: string) {
     const normalized = symbol.toUpperCase().trim().replace('.JK', '');
     return `${normalized}.JK`;
@@ -598,6 +793,16 @@ export class AppService {
     const recent = volumes.slice(-lookback - 1, -1);
     const avg = recent.reduce((sum, vol) => sum + vol, 0) / recent.length;
     return avg > 0 ? current / avg : 1;
+  }
+
+  private maxFromSeries(values: number[], lookback: number) {
+    const slice = values.slice(Math.max(0, values.length - lookback));
+    return slice.length ? Math.max(...slice) : 0;
+  }
+
+  private minFromSeries(values: number[], lookback: number) {
+    const slice = values.slice(Math.max(0, values.length - lookback));
+    return slice.length ? Math.min(...slice) : 0;
   }
 
   private getMlPrediction(payload: StockAnalysisRequestDto) {

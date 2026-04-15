@@ -24,6 +24,7 @@ GET /stockpilot/
     "recommendation": "POST /stock-analysis/recommendation",
     "recommendationAuto": "POST /stock-analysis/recommendation/auto",
     "marketData": "GET /stock-analysis/market-data/:symbol",
+    "stream": "GET /stock-analysis/stream/:symbol",
     "tradingView": "GET /stock-analysis/tradingview/:symbol",
     "trainMl": "POST /stock-analysis/ml/train"
   },
@@ -321,7 +322,80 @@ GET /stockpilot/stock-analysis/tradingview/BBCA
 
 ---
 
-## 6. POST /stock-analysis/ml/train
+## 6. GET /stock-analysis/stream/:symbol
+
+Stream realtime rekomendasi otomatis. Endpoint ini memakai SSE (Server-Sent Events), jadi frontend cukup membuka koneksi sekali lalu menerima update berkala tanpa spam quick scan.
+
+### Request
+
+**Path Parameter:**
+- `symbol` (string, required): Ticker saham, contoh `BBCA`, `TLKM`
+
+**Query Parameter:**
+- `intervalMs` (number, optional): Interval update dalam milidetik, minimum 5000. Default 15000
+- `foreignFlowBillion` (number, optional): Input flow asing untuk memperkuat broker summary
+- `brokerNetBuyTop3Billion` (number, optional): Input net buy top 3 broker
+- `indicators` (string, optional): Daftar indikator TradingView dipisah koma
+- `style` (string, optional): `DAY_TRADING`, `SWING_TRADING`, atau `SCALPING`
+
+### Example
+```
+GET /stockpilot/stock-analysis/stream/BBCA?intervalMs=10000&style=DAY_TRADING
+```
+
+### Event Payload
+```json
+{
+  "type": "realtime-recommendation",
+  "symbol": "BBCA.JK",
+  "updatedAt": "2026-04-16T10:30:45.123Z",
+  "marketData": {
+    "symbol": "BBCA.JK",
+    "closePrice": 5750.5,
+    "livePrice": 5750.5,
+    "isRealTime": true,
+    "indicators": {
+      "rsi": 62.45,
+      "macdHistogram": 125.3,
+      "volumeRatio": 1.32,
+      "ema20": 5625,
+      "ema50": 5480.75
+    },
+    "candles": {
+      "open": 5700,
+      "high": 5765,
+      "low": 5688,
+      "previousHigh": 5772,
+      "previousLow": 5660
+    },
+    "source": {
+      "provider": "Yahoo Finance",
+      "range": "1d",
+      "interval": "1m",
+      "cached": false,
+      "realTime": true,
+      "note": "Analisis memakai data intraday 1 menit + live quote terbaru."
+    }
+  },
+  "realtimeSignals": {
+    "liquiditySweep": "BULLISH",
+    "bidOfferImbalance": 0.48,
+    "reason": "Likuiditas bawah tersapu lalu harga reclaim level sebelumnya."
+  },
+  "recommendation": {
+    "marketBias": "BULLISH",
+    "preferredStyle": "DAY_TRADING",
+    "scoring": {
+      "mlProbabilityBuy": 0.72,
+      "mlSignal": "BUY"
+    }
+  }
+}
+```
+
+---
+
+## 7. POST /stock-analysis/ml/train
 
 Training/retrain model logistic regression dengan data historis berlabel BUY/SELL.
 

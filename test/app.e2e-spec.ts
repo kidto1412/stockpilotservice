@@ -19,6 +19,11 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
-      .expect('Hello World!');
+      .expect((res) => {
+        expect(res.body.appName).toBe('StockPilot IDX Analyzer');
+        expect(res.body.endpoints.stream).toBe(
+          'GET /stock-analysis/stream/:symbol',
+        );
+      });
   });
 });

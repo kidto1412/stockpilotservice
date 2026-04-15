@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  MessageEvent,
+  Param,
+  Post,
+  Query,
+  Sse,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { AppService } from './app.service';
 import {
   AutoRecommendationRequestDto,
@@ -33,6 +43,34 @@ export class AppController {
   @Get('stock-analysis/market-data/:symbol')
   getMarketData(@Param('symbol') symbol: string) {
     return this.appService.getMarketData(symbol);
+  }
+
+  @Public()
+  @Sse('stock-analysis/stream/:symbol')
+  streamRealtimeRecommendation(
+    @Param('symbol') symbol: string,
+    @Query('intervalMs') intervalMs?: string,
+    @Query('foreignFlowBillion') foreignFlowBillion?: string,
+    @Query('brokerNetBuyTop3Billion') brokerNetBuyTop3Billion?: string,
+    @Query('indicators') indicators?: string,
+    @Query('style') style?: string,
+  ): Observable<MessageEvent> {
+    const parsedIndicators = indicators
+      ? indicators
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : undefined;
+
+    return this.appService.streamRealtimeRecommendation(symbol, {
+      intervalMs: intervalMs ? Number(intervalMs) : undefined,
+      foreignFlowBillion: foreignFlowBillion ? Number(foreignFlowBillion) : undefined,
+      brokerNetBuyTop3Billion: brokerNetBuyTop3Billion
+        ? Number(brokerNetBuyTop3Billion)
+        : undefined,
+      tradingViewIndicators: parsedIndicators,
+      strategyStyle: style as any,
+    });
   }
 
   @Public()
