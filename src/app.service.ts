@@ -181,12 +181,37 @@ export class AppService {
       },
     };
 
+    const autoSignals = this.deriveRealtimeSignals(resultPayload);
+    const recommendationPayload: StockAnalysisRequestDto = {
+      symbol: resultPayload.symbol,
+      closePrice: resultPayload.closePrice,
+      rsi: resultPayload.indicators.rsi,
+      macdHistogram: resultPayload.indicators.macdHistogram,
+      volumeRatio: resultPayload.indicators.volumeRatio,
+      liquiditySweep: autoSignals.liquiditySweep,
+      bidOfferImbalance: autoSignals.bidOfferImbalance,
+      ema20: resultPayload.indicators.ema20,
+      ema50: resultPayload.indicators.ema50,
+      foreignFlowBillion: 0,
+      brokerNetBuyTop3Billion: 0,
+    };
+    const recommendation = this.generateRecommendation(recommendationPayload);
+
+    const responsePayload = {
+      ...resultPayload,
+      recommendation,
+      marketBias: recommendation.marketBias,
+      strategies: recommendation.strategies,
+      tradingView: recommendation.tradingView,
+      scoring: recommendation.scoring,
+    };
+
     this.marketDataCache.set(cacheKey, {
-      data: resultPayload,
+      data: responsePayload,
       cachedAt: Date.now(),
     });
 
-    return resultPayload;
+    return responsePayload;
   }
 
   private buildDegradedMarketData(symbol: string, reason: string) {
@@ -195,7 +220,7 @@ export class AppService {
     const ema20 = basePrice * 0.998;
     const ema50 = basePrice * 0.995;
 
-    return {
+    const fallbackMarketData = {
       symbol,
       closePrice: this.round(basePrice),
       livePrice: null,
@@ -224,6 +249,30 @@ export class AppService {
         degraded: true,
         note: `Provider realtime tidak tersedia: ${reason}. Data fallback dipakai agar endpoint tidak gagal.`,
       },
+    };
+
+    const recommendationPayload: StockAnalysisRequestDto = {
+      symbol: fallbackMarketData.symbol,
+      closePrice: fallbackMarketData.closePrice,
+      rsi: fallbackMarketData.indicators.rsi,
+      macdHistogram: fallbackMarketData.indicators.macdHistogram,
+      volumeRatio: fallbackMarketData.indicators.volumeRatio,
+      liquiditySweep: LiquiditySweepSignal.NONE,
+      bidOfferImbalance: 0,
+      ema20: fallbackMarketData.indicators.ema20,
+      ema50: fallbackMarketData.indicators.ema50,
+      foreignFlowBillion: 0,
+      brokerNetBuyTop3Billion: 0,
+    };
+    const recommendation = this.generateRecommendation(recommendationPayload);
+
+    return {
+      ...fallbackMarketData,
+      recommendation,
+      marketBias: recommendation.marketBias,
+      strategies: recommendation.strategies,
+      tradingView: recommendation.tradingView,
+      scoring: recommendation.scoring,
     };
   }
 
@@ -510,9 +559,12 @@ export class AppService {
       tradingViewIndicators: payload.tradingViewIndicators,
     };
 
+    const recommendation = this.generateRecommendation(recommendationPayload);
+
     return {
+      ...recommendation,
       marketData,
-      recommendation: this.generateRecommendation(recommendationPayload),
+      recommendation,
     };
   }
 

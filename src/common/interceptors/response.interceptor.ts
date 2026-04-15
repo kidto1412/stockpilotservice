@@ -46,6 +46,9 @@ export class GlobalResponseInterceptor implements NestInterceptor {
           statusCode,
           message,
           data,
+          ...(data && typeof data === 'object' && !Array.isArray(data)
+            ? data
+            : {}),
         };
       }),
     );
