@@ -15,8 +15,12 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return app metadata', () => {
+      const result = appController.getInfo();
+      expect(result.appName).toBe('StockPilot IDX Analyzer');
+      expect(result.endpoints.recommendation).toBe(
+        'POST /stock-analysis/recommendation',
+      );
     });
   });
 });

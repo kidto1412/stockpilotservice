@@ -18,8 +18,10 @@ export class AuthContextMiddleware implements NestMiddleware {
 
     // Skip route login/register
     if (
+      req.originalUrl === '/' ||
       req.originalUrl.includes('/auth/login') ||
-      req.originalUrl.includes('/auth/register')
+      req.originalUrl.includes('/auth/register') ||
+      req.originalUrl.includes('/stock-analysis')
     ) {
       return next();
     }
