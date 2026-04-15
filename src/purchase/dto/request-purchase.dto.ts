@@ -19,12 +19,8 @@ class PurchaseItemDto {
 
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   cost: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  sellingPrice?: number;
 }
 
 export class CreatePurchaseDto {
@@ -43,9 +39,15 @@ export class CreatePurchaseDto {
   @IsDateString()
   dueDate?: Date;
 
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  amount: number;
+  amount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  paidAmount?: number;
 
   @IsOptional()
   @IsNumber()

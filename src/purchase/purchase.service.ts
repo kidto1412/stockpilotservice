@@ -25,9 +25,47 @@ export class PurchaseService {
         throw new ForbiddenException('Supplier not from this store');
       }
 
+      const productIds = dto.items.map((item) => item.productId);
+      const uniqueProductIds = Array.from(new Set(productIds));
+
+      const products = await tx.product.findMany({
+        where: {
+          id: { in: uniqueProductIds },
+          storeId,
+        },
+        select: {
+          id: true,
+          cost: true,
+        },
+      });
+
+      if (products.length !== uniqueProductIds.length) {
+        throw new NotFoundException(
+          'Sebagian produk tidak ditemukan pada store ini',
+        );
+      }
+
+      const productMap = new Map(
+        products.map((product) => [product.id, product]),
+      );
+
+      const resolvedItems = dto.items.map((item) => {
+        const product = productMap.get(item.productId);
+
+        if (!product) {
+          throw new NotFoundException('Product not found');
+        }
+
+        return {
+          productId: item.productId,
+          quantity: item.quantity,
+          cost: product.cost,
+        };
+      });
+
       let totalAmount = 0;
 
-      dto.items.forEach((item) => {
+      resolvedItems.forEach((item) => {
         totalAmount += item.cost * item.quantity;
       });
 
@@ -41,15 +79,17 @@ export class PurchaseService {
 
       const netTotalAmount = totalAmount - discount;
 
-      if (dto.amount > netTotalAmount) {
+      const paidAmount = dto.paidAmount ?? dto.amount ?? 0;
+
+      if (paidAmount > netTotalAmount) {
         throw new BadRequestException(
-          'Amount pembelian tidak boleh lebih besar dari total pembelian',
+          'paidAmount pembelian tidak boleh lebih besar dari total pembelian',
         );
       }
 
-      const remaining = netTotalAmount - dto.amount;
+      const remaining = netTotalAmount - paidAmount;
       const payableStatus =
-        remaining <= 0 ? 'PAID' : dto.amount <= 0 ? 'UNPAID' : 'PARTIAL';
+        remaining <= 0 ? 'PAID' : paidAmount <= 0 ? 'UNPAID' : 'PARTIAL';
 
       const purchase = await tx.purchase.create({
         data: {
@@ -61,19 +101,7 @@ export class PurchaseService {
         },
       });
 
-      for (const item of dto.items) {
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
-        });
-
-        if (!product) {
-          throw new NotFoundException('Product not found');
-        }
-
-        if (product.storeId !== storeId) {
-          throw new ForbiddenException('Product not from this store');
-        }
-
+      for (const item of resolvedItems) {
         await tx.purchaseItem.create({
           data: {
             purchaseId: purchase.id,
@@ -89,10 +117,6 @@ export class PurchaseService {
             stock: {
               increment: item.quantity,
             },
-            cost: item.cost,
-            ...(item.sellingPrice !== undefined
-              ? { price: item.sellingPrice }
-              : {}),
           },
         });
 
@@ -113,7 +137,7 @@ export class PurchaseService {
           supplierId: dto.supplierId,
           purchaseId: purchase.id,
           totalAmount: netTotalAmount,
-          paidAmount: dto.amount,
+          paidAmount,
           remaining,
           status: payableStatus,
           dueDate: dto.dueDate,

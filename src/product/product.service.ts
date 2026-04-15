@@ -5,13 +5,31 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
+import {
+  CreateProductDto,
+  ProductInlineDiscountDto,
+  UpdateProductDto,
+} from './dto/product.dto';
 import { paginateResponse } from 'src/utils/response.util';
 import { generateBarcode } from 'src/utils/generatebarcode';
 
 @Injectable()
 export class ProductService {
   constructor(private prisma: PrismaService) {}
+
+  private transformProductResponse(product: any) {
+    const { productDiscounts, ...rest } = product;
+    return {
+      ...rest,
+      discounts: productDiscounts?.map((pd: any) => ({
+        id: pd.discount.id,
+        name: pd.discount.name,
+        valueType: pd.discount.valueType,
+        value: pd.discount.value,
+        description: pd.discount.description,
+      })) || [],
+    };
+  }
 
   private async resolveBarcode(
     barcodeInput: unknown,
@@ -59,12 +77,93 @@ export class ProductService {
     }
   }
 
+  private hasInlineDiscountData(discount: ProductInlineDiscountDto) {
+    return Boolean(
+      discount.name ||
+        discount.description ||
+        discount.valueType ||
+        discount.value !== undefined,
+    );
+  }
+
+  private async resolveProductDiscountIds(
+    tx: any,
+    discountIds: string[] | undefined,
+    discounts: ProductInlineDiscountDto[] | undefined,
+    storeId: string,
+  ) {
+    const resolvedIds: string[] = [];
+
+    if (discountIds?.length) {
+      await this.ensureDiscountsBelongToStore(discountIds, storeId);
+      resolvedIds.push(...discountIds);
+    }
+
+    if (discounts?.length) {
+      for (const discount of discounts) {
+        if (discount.discountId) {
+          const existing = await tx.discount.findUnique({
+            where: { id: discount.discountId },
+            select: { id: true, storeId: true },
+          });
+
+          if (!existing) {
+            throw new BadRequestException('Diskon tidak ditemukan');
+          }
+
+          if (existing.storeId !== storeId) {
+            throw new BadRequestException('Diskon bukan milik store ini');
+          }
+
+          resolvedIds.push(existing.id);
+          continue;
+        }
+
+        if (!this.hasInlineDiscountData(discount)) {
+          throw new BadRequestException(
+            'Diskon inline harus memiliki data name/valueType/value',
+          );
+        }
+
+        if (
+          !discount.name ||
+          !discount.valueType ||
+          discount.value === undefined
+        ) {
+          throw new BadRequestException(
+            'Diskon inline harus memiliki name, valueType, dan value',
+          );
+        }
+
+        const created = await tx.discount.create({
+          data: {
+            storeId,
+            name: discount.name,
+            description: discount.description,
+            valueType: discount.valueType,
+            value: discount.value,
+          },
+          select: { id: true },
+        });
+
+        resolvedIds.push(created.id);
+      }
+    }
+
+    return Array.from(new Set(resolvedIds));
+  }
+
   async create(
     dto: CreateProductDto,
     imageUrl: string | undefined,
     storeId: string,
   ) {
-    const { discountIds, barcode: barcodeInput, ...productData } = dto as any;
+    const {
+      discountIds,
+      discounts,
+      barcode: barcodeInput,
+      ...productData
+    } = dto as any;
 
     const barcode =
       (await this.resolveBarcode(barcodeInput, storeId)) ||
@@ -72,26 +171,38 @@ export class ProductService {
 
     await this.ensureDiscountsBelongToStore(discountIds, storeId);
 
-    return this.prisma.product.create({
-      data: {
-        ...productData,
-        barcode,
-        imageUrl,
+    return this.prisma.$transaction(async (tx) => {
+      const resolvedDiscountIds = await this.resolveProductDiscountIds(
+        tx,
+        discountIds,
+        discounts,
         storeId,
-        productDiscounts: discountIds?.length
-          ? {
-              create: discountIds.map((discountId) => ({ discountId })),
-            }
-          : undefined,
-      },
-      include: {
-        category: true,
-        productDiscounts: {
-          include: {
-            discount: true,
+      );
+
+      const product = await tx.product.create({
+        data: {
+          ...productData,
+          barcode,
+          imageUrl,
+          storeId,
+          productDiscounts: resolvedDiscountIds.length
+            ? {
+                create: resolvedDiscountIds.map((discountId) => ({
+                  discountId,
+                })),
+              }
+            : undefined,
+        },
+        include: {
+          category: true,
+          productDiscounts: {
+            include: {
+              discount: true,
+            },
           },
         },
-      },
+      });
+      return this.transformProductResponse(product);
     });
   }
   async getPagination(
@@ -126,7 +237,8 @@ export class ProductService {
       }),
     ]);
 
-    return paginateResponse(data, page, size, total);
+    const transformedData = data.map((product) => this.transformProductResponse(product));
+    return paginateResponse(transformedData, page, size, total);
   }
 
   async findAll(storeId: string, categoryId?: string) {
@@ -135,7 +247,7 @@ export class ProductService {
       ...(categoryId ? { categoryId } : {}),
     };
 
-    return this.prisma.product.findMany({
+    const products = await this.prisma.product.findMany({
       where,
       include: {
         category: true,
@@ -146,6 +258,8 @@ export class ProductService {
         },
       },
     });
+
+    return products.map((product) => this.transformProductResponse(product));
   }
 
   async findOne(id: string, storeId: string) {
@@ -168,7 +282,7 @@ export class ProductService {
       throw new ForbiddenException('Unauthorized access to this product');
     }
 
-    return product;
+    return this.transformProductResponse(product);
   }
 
   async update(
@@ -177,10 +291,14 @@ export class ProductService {
     imageUrl: string | undefined,
     storeId: string,
   ) {
-    const { discountIds, barcode: barcodeInput, ...productData } = dto as any;
+    const {
+      discountIds,
+      discounts,
+      barcode: barcodeInput,
+      ...productData
+    } = dto as any;
 
     await this.findOne(id, storeId);
-    await this.ensureDiscountsBelongToStore(discountIds, storeId);
 
     let barcodeData: { barcode?: string } = {};
 
@@ -191,14 +309,21 @@ export class ProductService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      if (discountIds) {
+      const resolvedDiscountIds = await this.resolveProductDiscountIds(
+        tx,
+        discountIds,
+        discounts,
+        storeId,
+      );
+
+      if (discountIds !== undefined || discounts !== undefined) {
         await tx.productDiscount.deleteMany({
           where: { productId: id },
         });
 
-        if (discountIds.length) {
+        if (resolvedDiscountIds.length) {
           await tx.productDiscount.createMany({
-            data: discountIds.map((discountId) => ({
+            data: resolvedDiscountIds.map((discountId) => ({
               productId: id,
               discountId,
             })),
@@ -206,7 +331,7 @@ export class ProductService {
         }
       }
 
-      return tx.product.update({
+      const product = await tx.product.update({
         where: { id },
         data: {
           ...productData,
@@ -222,6 +347,7 @@ export class ProductService {
           },
         },
       });
+      return this.transformProductResponse(product);
     });
   }
 

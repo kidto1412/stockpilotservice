@@ -189,6 +189,7 @@ model Product {
   sku        String?   @unique
   barcode    String?   @unique
   unit       String?
+  unitValue  Float?
   cost       Float
   price      Float
   stock      Int       @default(0)
