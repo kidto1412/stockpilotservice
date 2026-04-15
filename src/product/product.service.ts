@@ -19,15 +19,19 @@ export class ProductService {
 
   private transformProductResponse(product: any) {
     const { productDiscounts, ...rest } = product;
+    const firstDiscount = productDiscounts?.[0]?.discount;
+
     return {
       ...rest,
-      discounts: productDiscounts?.map((pd: any) => ({
-        id: pd.discount.id,
-        name: pd.discount.name,
-        valueType: pd.discount.valueType,
-        value: pd.discount.value,
-        description: pd.discount.description,
-      })) || [],
+      discount: firstDiscount
+        ? {
+            id: firstDiscount.id,
+            name: firstDiscount.name,
+            valueType: firstDiscount.valueType,
+            value: firstDiscount.value,
+            description: firstDiscount.description,
+          }
+        : null,
     };
   }
 
@@ -56,23 +60,23 @@ export class ProductService {
     return generateBarcode(this.prisma, storeId);
   }
 
-  private async ensureDiscountsBelongToStore(
-    discountIds: string[],
+  private async ensureDiscountBelongsToStore(
+    discountId: string | undefined,
     storeId: string,
   ) {
-    if (!discountIds || discountIds.length === 0) return;
+    if (!discountId) return;
 
-    const discounts = await this.prisma.discount.findMany({
+    const discount = await this.prisma.discount.findFirst({
       where: {
-        id: { in: discountIds },
+        id: discountId,
         storeId,
       },
       select: { id: true },
     });
 
-    if (discounts.length !== discountIds.length) {
+    if (!discount) {
       throw new BadRequestException(
-        'Sebagian discountIds tidak ditemukan pada store ini',
+        'discountId tidak ditemukan pada store ini',
       );
     }
   }
@@ -86,71 +90,70 @@ export class ProductService {
     );
   }
 
-  private async resolveProductDiscountIds(
+  private async resolveProductDiscountId(
     tx: any,
-    discountIds: string[] | undefined,
-    discounts: ProductInlineDiscountDto[] | undefined,
+    discountId: string | undefined,
+    discount: ProductInlineDiscountDto | undefined,
     storeId: string,
   ) {
-    const resolvedIds: string[] = [];
+    const discountIdFromInline = discount?.discountId;
 
-    if (discountIds?.length) {
-      await this.ensureDiscountsBelongToStore(discountIds, storeId);
-      resolvedIds.push(...discountIds);
+    if (
+      discountId &&
+      discountIdFromInline &&
+      discountId !== discountIdFromInline
+    ) {
+      throw new BadRequestException(
+        'Gunakan salah satu discountId saja (root discountId atau discount.discountId)',
+      );
     }
 
-    if (discounts?.length) {
-      for (const discount of discounts) {
-        if (discount.discountId) {
-          const existing = await tx.discount.findUnique({
-            where: { id: discount.discountId },
-            select: { id: true, storeId: true },
-          });
+    const resolvedExistingDiscountId = discountId ?? discountIdFromInline;
+    if (resolvedExistingDiscountId) {
+      const existing = await tx.discount.findUnique({
+        where: { id: resolvedExistingDiscountId },
+        select: { id: true, storeId: true },
+      });
 
-          if (!existing) {
-            throw new BadRequestException('Diskon tidak ditemukan');
-          }
-
-          if (existing.storeId !== storeId) {
-            throw new BadRequestException('Diskon bukan milik store ini');
-          }
-
-          resolvedIds.push(existing.id);
-          continue;
-        }
-
-        if (!this.hasInlineDiscountData(discount)) {
-          throw new BadRequestException(
-            'Diskon inline harus memiliki data name/valueType/value',
-          );
-        }
-
-        if (
-          !discount.name ||
-          !discount.valueType ||
-          discount.value === undefined
-        ) {
-          throw new BadRequestException(
-            'Diskon inline harus memiliki name, valueType, dan value',
-          );
-        }
-
-        const created = await tx.discount.create({
-          data: {
-            storeId,
-            name: discount.name,
-            description: discount.description,
-            valueType: discount.valueType,
-            value: discount.value,
-          },
-          select: { id: true },
-        });
-
-        resolvedIds.push(created.id);
+      if (!existing) {
+        throw new BadRequestException('Diskon tidak ditemukan');
       }
+
+      if (existing.storeId !== storeId) {
+        throw new BadRequestException('Diskon bukan milik store ini');
+      }
+
+      return existing.id;
     }
 
-    return Array.from(new Set(resolvedIds));
+    if (!discount) {
+      return undefined;
+    }
+
+    if (!this.hasInlineDiscountData(discount)) {
+      throw new BadRequestException(
+        'Diskon inline harus memiliki data name/valueType/value',
+      );
+    }
+
+    if (!discount.name || !discount.valueType || discount.value === undefined) {
+      throw new BadRequestException(
+        'Diskon inline harus memiliki name, valueType, dan value',
+      );
+    }
+
+    const created = await tx.discount.create({
+      data: {
+        storeId,
+        name: discount.name,
+        description: discount.description,
+        valueType: discount.valueType,
+        value: discount.value,
+      },
+      select: { id: true },
+    });
+
+    return created.id;
   }
 
   async create(
@@ -159,8 +162,8 @@ export class ProductService {
     storeId: string,
   ) {
     const {
-      discountIds,
-      discounts,
+      discountId,
+      discount,
       barcode: barcodeInput,
       ...productData
     } = dto as any;
@@ -169,13 +172,13 @@ export class ProductService {
       (await this.resolveBarcode(barcodeInput, storeId)) ||
       (await generateBarcode(this.prisma, storeId));
 
-    await this.ensureDiscountsBelongToStore(discountIds, storeId);
+    await this.ensureDiscountBelongsToStore(discountId, storeId);
 
     return this.prisma.$transaction(async (tx) => {
-      const resolvedDiscountIds = await this.resolveProductDiscountIds(
+      const resolvedDiscountId = await this.resolveProductDiscountId(
         tx,
-        discountIds,
-        discounts,
+        discountId,
+        discount,
         storeId,
       );
 
@@ -185,11 +188,11 @@ export class ProductService {
           barcode,
           imageUrl,
           storeId,
-          productDiscounts: resolvedDiscountIds.length
+          productDiscounts: resolvedDiscountId
             ? {
-                create: resolvedDiscountIds.map((discountId) => ({
-                  discountId,
-                })),
+                create: {
+                  discountId: resolvedDiscountId,
+                },
               }
             : undefined,
         },
@@ -237,7 +240,9 @@ export class ProductService {
       }),
     ]);
 
-    const transformedData = data.map((product) => this.transformProductResponse(product));
+    const transformedData = data.map((product) =>
+      this.transformProductResponse(product),
+    );
     return paginateResponse(transformedData, page, size, total);
   }
 
@@ -292,8 +297,8 @@ export class ProductService {
     storeId: string,
   ) {
     const {
-      discountIds,
-      discounts,
+      discountId,
+      discount,
       barcode: barcodeInput,
       ...productData
     } = dto as any;
@@ -309,24 +314,24 @@ export class ProductService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const resolvedDiscountIds = await this.resolveProductDiscountIds(
+      const resolvedDiscountId = await this.resolveProductDiscountId(
         tx,
-        discountIds,
-        discounts,
+        discountId,
+        discount,
         storeId,
       );
 
-      if (discountIds !== undefined || discounts !== undefined) {
+      if (discountId !== undefined || discount !== undefined) {
         await tx.productDiscount.deleteMany({
           where: { productId: id },
         });
 
-        if (resolvedDiscountIds.length) {
-          await tx.productDiscount.createMany({
-            data: resolvedDiscountIds.map((discountId) => ({
+        if (resolvedDiscountId) {
+          await tx.productDiscount.create({
+            data: {
               productId: id,
-              discountId,
-            })),
+              discountId: resolvedDiscountId,
+            },
           });
         }
       }
