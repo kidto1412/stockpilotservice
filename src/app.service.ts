@@ -87,10 +87,32 @@ export class AppService {
       };
     }
 
-    const [quoteData, chartData] = await Promise.all([
-      this.fetchYahooQuote(normalized),
-      this.fetchYahooChart(normalized),
-    ]);
+    let quoteData: any;
+    let chartData: any;
+
+    try {
+      [quoteData, chartData] = await Promise.all([
+        this.fetchYahooQuote(normalized),
+        this.fetchYahooChart(normalized),
+      ]);
+    } catch (error) {
+      if (cached) {
+        return {
+          ...cached.data,
+          source: {
+            ...cached.data.source,
+            cached: true,
+            stale: true,
+            note: 'Provider bermasalah/rate limit, menggunakan stale cache terakhir agar aplikasi tetap berjalan.',
+          },
+        };
+      }
+
+      return this.buildDegradedMarketData(
+        normalized,
+        error instanceof Error ? error.message : 'Provider unavailable',
+      );
+    }
 
     const livePrice =
       quoteData?.regularMarketPrice ?? quoteData?.postMarketPrice ?? quoteData?.preMarketPrice;
@@ -165,6 +187,52 @@ export class AppService {
     });
 
     return resultPayload;
+  }
+
+  private buildDegradedMarketData(symbol: string, reason: string) {
+    const seed = this.symbolSeed(symbol);
+    const basePrice = 500 + (seed % 8500);
+    const ema20 = basePrice * 0.998;
+    const ema50 = basePrice * 0.995;
+
+    return {
+      symbol,
+      closePrice: this.round(basePrice),
+      livePrice: null,
+      isRealTime: false,
+      lastUpdatedAt: new Date().toISOString(),
+      indicators: {
+        rsi: 50,
+        macdHistogram: 0,
+        volumeRatio: 1,
+        ema20: this.round(ema20),
+        ema50: this.round(ema50),
+      },
+      candles: {
+        open: this.round(basePrice),
+        high: this.round(basePrice * 1.003),
+        low: this.round(basePrice * 0.997),
+        previousHigh: this.round(basePrice * 1.01),
+        previousLow: this.round(basePrice * 0.99),
+      },
+      source: {
+        provider: 'DEGRADED_FALLBACK',
+        range: 'N/A',
+        interval: 'N/A',
+        cached: false,
+        realTime: false,
+        degraded: true,
+        note: `Provider realtime tidak tersedia: ${reason}. Data fallback dipakai agar endpoint tidak gagal.`,
+      },
+    };
+  }
+
+  private symbolSeed(symbol: string) {
+    let hash = 0;
+    for (let i = 0; i < symbol.length; i++) {
+      hash = (hash * 31 + symbol.charCodeAt(i)) >>> 0;
+    }
+    return hash;
   }
 
   private async fetchYahooQuote(symbol: string) {
