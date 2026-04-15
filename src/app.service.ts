@@ -23,6 +23,13 @@ type MlFeatureWeights = {
 
 @Injectable()
 export class AppService {
+  private readonly marketDataCache = new Map<
+    string,
+    { data: any; cachedAt: number }
+  >();
+
+  private readonly marketDataCacheTtlMs = 10 * 60 * 1000;
+
   private mlWeights: MlFeatureWeights = {
     rsi: 0.18,
     macdHistogram: 1.2,
@@ -64,28 +71,106 @@ export class AppService {
 
   async getMarketData(symbol: string) {
     const normalized = this.normalizeIdxSymbol(symbol);
-    const chartUrl =
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}` +
-      '?interval=1d&range=6mo';
+    const cacheKey = normalized;
+    const cached = this.marketDataCache.get(cacheKey);
 
-    const response = await fetch(chartUrl, {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+    if (cached && Date.now() - cached.cachedAt < this.marketDataCacheTtlMs) {
+      return {
+        ...cached.data,
+        source: {
+          ...cached.data.source,
+          cached: true,
+          note: 'Data diambil dari cache agar tidak terkena rate limit provider.',
+        },
+      };
+    }
 
-    if (!response.ok) {
+    const [quoteData, chartData] = await Promise.all([
+      this.fetchYahooQuote(normalized),
+      this.fetchYahooChart(normalized),
+    ]);
+
+    const livePrice =
+      quoteData?.regularMarketPrice ?? quoteData?.postMarketPrice ?? quoteData?.preMarketPrice;
+    const closes = chartData.closes.slice();
+    const volumes = chartData.volumes.slice();
+
+    if (typeof livePrice === 'number' && livePrice > 0) {
+      closes.push(livePrice);
+      volumes.push(volumes.length ? volumes[volumes.length - 1] : 0);
+    }
+
+    if (closes.length < 60 || volumes.length < 30) {
       throw new BadRequestException(
-        `Gagal ambil data pasar untuk ${normalized}. Status: ${response.status}`,
+        `Data intraday ${normalized} belum cukup untuk menghitung indikator real-time.`,
       );
     }
 
+    const closePrice =
+      typeof livePrice === 'number' && livePrice > 0
+        ? livePrice
+        : closes[closes.length - 1];
+    const ema20 = this.getLastEma(closes, 20);
+    const ema50 = this.getLastEma(closes, 50);
+    const rsi = this.getLastRsi(closes, 14);
+    const macdHistogram = this.getLastMacdHistogram(closes);
+    const volumeRatio = this.getVolumeRatio(volumes, 20);
+
+    const resultPayload = {
+      symbol: normalized,
+      closePrice: this.round(closePrice),
+      livePrice: typeof livePrice === 'number' ? this.round(livePrice) : null,
+      isRealTime: true,
+      lastUpdatedAt:
+        quoteData?.regularMarketTime || chartData.lastTimestamp
+          ? new Date(
+              (quoteData?.regularMarketTime || chartData.lastTimestamp) * 1000,
+            ).toISOString()
+          : new Date().toISOString(),
+      indicators: {
+        rsi: this.round(rsi),
+        macdHistogram: this.round(macdHistogram),
+        volumeRatio: this.round(volumeRatio),
+        ema20: this.round(ema20),
+        ema50: this.round(ema50),
+      },
+      source: {
+        provider: 'Yahoo Finance',
+        range: '1d',
+        interval: '1m',
+        cached: false,
+        realTime: true,
+        note: 'Analisis memakai data intraday 1 menit + live quote terbaru.',
+      },
+    };
+
+    this.marketDataCache.set(cacheKey, {
+      data: resultPayload,
+      cachedAt: Date.now(),
+    });
+
+    return resultPayload;
+  }
+
+  private async fetchYahooQuote(symbol: string) {
+    const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
+    const response = await this.fetchYahooWithFallback(quoteUrl);
+    const data = await response.json();
+    return data?.quoteResponse?.result?.[0] ?? null;
+  }
+
+  private async fetchYahooChart(symbol: string) {
+    const chartUrl =
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+      '?interval=1m&range=1d&includePrePost=true&events=div%2Csplits';
+
+    const response = await this.fetchYahooWithFallback(chartUrl);
     const data = await response.json();
     const result = data?.chart?.result?.[0];
 
     if (!result?.indicators?.quote?.[0]) {
       throw new BadRequestException(
-        `Data saham ${normalized} tidak tersedia dari provider saat ini.`,
+        `Data saham ${symbol} tidak tersedia dari provider saat ini.`,
       );
     }
 
@@ -97,35 +182,39 @@ export class AppService {
       (value: number | null) => typeof value === 'number',
     ) as number[];
 
-    if (closes.length < 60 || volumes.length < 30) {
+    return {
+      closes,
+      volumes,
+      lastTimestamp: result?.meta?.regularMarketTime ?? result?.timestamp?.at?.(-1),
+    };
+  }
+
+  private async fetchYahooWithFallback(url: string) {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Referer: 'https://finance.yahoo.com/',
+        Origin: 'https://finance.yahoo.com',
+      },
+    });
+
+    if (!response.ok) {
+      const isRateLimit = response.status === 429;
+
+      if (isRateLimit) {
+        throw new BadRequestException(
+          'Provider rate limit tercapai. Gunakan cache yang sudah ada atau coba lagi beberapa saat.',
+        );
+      }
+
       throw new BadRequestException(
-        `Data historis ${normalized} belum cukup untuk menghitung indikator.`,
+        `Gagal ambil data pasar. Status: ${response.status}`,
       );
     }
 
-    const closePrice = closes[closes.length - 1];
-    const ema20 = this.getLastEma(closes, 20);
-    const ema50 = this.getLastEma(closes, 50);
-    const rsi = this.getLastRsi(closes, 14);
-    const macdHistogram = this.getLastMacdHistogram(closes);
-    const volumeRatio = this.getVolumeRatio(volumes, 20);
-
-    return {
-      symbol: normalized,
-      closePrice: this.round(closePrice),
-      indicators: {
-        rsi: this.round(rsi),
-        macdHistogram: this.round(macdHistogram),
-        volumeRatio: this.round(volumeRatio),
-        ema20: this.round(ema20),
-        ema50: this.round(ema50),
-      },
-      source: {
-        provider: 'Yahoo Finance',
-        range: '6mo',
-        interval: '1d',
-      },
-    };
+    return response;
   }
 
   getTradingViewConfig(symbol: string, indicators?: string[]) {
