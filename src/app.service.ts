@@ -3,11 +3,13 @@ import {
   AutoRecommendationRequestDto,
   ChartIndicatorQueryDto,
   LiquiditySweepSignal,
+  MarketDataListQueryDto,
   MlTargetSignal,
   StockAnalysisRequestDto,
   TrainMlModelRequestDto,
 } from './app.dto';
 import { Observable, from, map, switchMap, catchError, of, timer } from 'rxjs';
+import { PrismaService } from './prisma/prisma.service';
 
 type MarketBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 
@@ -23,8 +25,57 @@ type MlFeatureWeights = {
   brokerNetBuyTop3Billion: number;
 };
 
+type DbMarketRow = {
+  source: string;
+  symbol: string;
+  snapshot_at: Date;
+  close_price: number | null;
+  volume: bigint | number | null;
+  rsi: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  ema20: number | null;
+  ema50: number | null;
+  raw_payload: unknown;
+  prev_close_price?: number | null;
+  prev_volume?: bigint | number | null;
+};
+
+type DbPriceHistoryRow = {
+  price_at: Date;
+  open_price: number | null;
+  high_price: number | null;
+  low_price: number | null;
+  close_price: number | null;
+  volume: bigint | number | null;
+};
+
+type ChartRange =
+  | '1d'
+  | '5d'
+  | '1mo'
+  | '3mo'
+  | '6mo'
+  | '1y'
+  | '2y'
+  | '5y'
+  | '10y';
+
+type ChartInterval = '1m' | '5m' | '15m' | '30m' | '60m' | '1d';
+
+type CandlePoint = {
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+};
+
 @Injectable()
 export class AppService {
+  constructor(private readonly prisma: PrismaService) {}
+
   private readonly marketDataCache = new Map<
     string,
     { data: any; cachedAt: number }
@@ -59,7 +110,8 @@ export class AppService {
       endpoints: {
         recommendation: 'POST /stock-analysis/recommendation',
         recommendationAuto: 'POST /stock-analysis/recommendation/auto',
-        marketData: 'GET /stock-analysis/market-data/:symbol',
+        marketDataAll: 'GET /stock-analysis/market-data',
+        marketDataBySymbol: 'GET /stock-analysis/market-data/:symbol',
         chart: 'GET /stock-analysis/chart/:symbol',
         stream: 'GET /stock-analysis/stream/:symbol',
         tradingView: 'GET /stock-analysis/tradingview/:symbol',
@@ -73,153 +125,200 @@ export class AppService {
     };
   }
 
+  async getMarketDataList(query: MarketDataListQueryDto) {
+    const source = (query.source ?? 'TRADINGVIEW').toUpperCase();
+
+    const rows = await this.prisma.$queryRaw<DbMarketRow[]>`
+      WITH ranked AS (
+        SELECT
+          source,
+          symbol,
+          snapshot_at,
+          close_price,
+          volume,
+          rsi,
+          macd,
+          macd_signal,
+          ema20,
+          ema50,
+          raw_payload,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_at DESC) AS rn
+        FROM market_technical_snapshot
+        WHERE source = ${source}
+      )
+      SELECT
+        source,
+        symbol,
+        snapshot_at,
+        close_price,
+        volume,
+        rsi,
+        macd,
+        macd_signal,
+        ema20,
+        ema50,
+        raw_payload
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY snapshot_at DESC
+      LIMIT ${query.limit}
+    `;
+
+    return {
+      source,
+      count: rows.length,
+      items: rows.map((row) => this.mapDbRowToMarketPayload(row, null)),
+    };
+  }
+
   async getMarketData(symbol: string) {
-    const normalized = this.normalizeIdxSymbol(symbol);
-    const cacheKey = normalized;
-    const cached = this.marketDataCache.get(cacheKey);
+    const normalizedSymbol = symbol.toUpperCase().replace('.JK', '').trim();
 
-    if (cached && Date.now() - cached.cachedAt < this.marketDataCacheTtlMs) {
-      return {
-        ...cached.data,
-        source: {
-          ...cached.data.source,
-          cached: true,
-          note: 'Data diambil dari cache agar tidak terkena rate limit provider.',
-        },
-      };
-    }
+    const rows = await this.prisma.$queryRaw<DbMarketRow[]>`
+      WITH ranked AS (
+        SELECT
+          source,
+          symbol,
+          snapshot_at,
+          close_price,
+          volume,
+          rsi,
+          macd,
+          macd_signal,
+          ema20,
+          ema50,
+          raw_payload,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_at DESC) AS rn
+        FROM market_technical_snapshot
+        WHERE source = 'TRADINGVIEW'
+          AND symbol = ${normalizedSymbol}
+      )
+      SELECT
+        l.source,
+        l.symbol,
+        l.snapshot_at,
+        l.close_price,
+        l.volume,
+        l.rsi,
+        l.macd,
+        l.macd_signal,
+        l.ema20,
+        l.ema50,
+        l.raw_payload,
+        p.close_price AS prev_close_price,
+        p.volume AS prev_volume
+      FROM ranked l
+      LEFT JOIN ranked p ON p.rn = 2
+      WHERE l.rn = 1
+      LIMIT 1
+    `;
 
-    let quoteData: any;
-    let chartData: any;
-
-    try {
-      [quoteData, chartData] = await Promise.all([
-        this.fetchYahooQuote(normalized),
-        this.fetchYahooChart(normalized),
-      ]);
-    } catch (error) {
-      if (cached) {
-        return {
-          ...cached.data,
-          source: {
-            ...cached.data.source,
-            cached: true,
-            stale: true,
-            note: 'Provider bermasalah/rate limit, menggunakan stale cache terakhir agar aplikasi tetap berjalan.',
-          },
-        };
-      }
-
-      return this.buildDegradedMarketData(
-        normalized,
-        error instanceof Error ? error.message : 'Provider unavailable',
-      );
-    }
-
-    const livePrice =
-      quoteData?.regularMarketPrice ??
-      quoteData?.postMarketPrice ??
-      quoteData?.preMarketPrice;
-    const closes = chartData.closes.slice();
-    const opens = chartData.opens.slice();
-    const highs = chartData.highs.slice();
-    const lows = chartData.lows.slice();
-    const volumes = chartData.volumes.slice();
-
-    if (typeof livePrice === 'number' && livePrice > 0) {
-      closes.push(livePrice);
-      opens.push(opens.length ? opens[opens.length - 1] : livePrice);
-      highs.push(
-        highs.length ? Math.max(highs[highs.length - 1], livePrice) : livePrice,
-      );
-      lows.push(
-        lows.length ? Math.min(lows[lows.length - 1], livePrice) : livePrice,
-      );
-      volumes.push(volumes.length ? volumes[volumes.length - 1] : 0);
-    }
-
-    if (closes.length < 60 || volumes.length < 30) {
+    const latest = rows[0];
+    if (!latest) {
       throw new BadRequestException(
-        `Data intraday ${normalized} belum cukup untuk menghitung indikator real-time.`,
+        `Data ${normalizedSymbol}.JK belum ada di database snapshot`,
       );
     }
 
-    const closePrice =
-      typeof livePrice === 'number' && livePrice > 0
-        ? livePrice
-        : closes[closes.length - 1];
-    const ema20 = this.getLastEma(closes, 20);
-    const ema50 = this.getLastEma(closes, 50);
-    const rsi = this.getLastRsi(closes, 14);
-    const macdHistogram = this.getLastMacdHistogram(closes);
-    const volumeRatio = this.getVolumeRatio(volumes, 20);
+    return this.mapDbRowToMarketPayload(latest, rows[0].prev_volume ?? null);
+  }
 
-    const resultPayload = {
-      symbol: normalized,
+  private mapDbRowToMarketPayload(
+    row: DbMarketRow,
+    prevVolumeInput: bigint | number | null,
+  ) {
+    const closePrice = row.close_price ?? 0;
+    const prevVolume = prevVolumeInput;
+    const currentVolume = row.volume;
+    const volumeRatio = this.computeDbVolumeRatio(currentVolume, prevVolume);
+    const macdHistogram =
+      row.macd !== null && row.macd_signal !== null
+        ? row.macd - row.macd_signal
+        : null;
+
+    const payload = {
+      symbol: `${row.symbol}.JK`,
       closePrice: this.round(closePrice),
-      livePrice: typeof livePrice === 'number' ? this.round(livePrice) : null,
-      isRealTime: true,
-      lastUpdatedAt:
-        quoteData?.regularMarketTime || chartData.lastTimestamp
-          ? new Date(
-              (quoteData?.regularMarketTime || chartData.lastTimestamp) * 1000,
-            ).toISOString()
-          : new Date().toISOString(),
+      livePrice: null,
+      isRealTime: false,
+      lastUpdatedAt: row.snapshot_at.toISOString(),
       indicators: {
-        rsi: this.round(rsi),
-        macdHistogram: this.round(macdHistogram),
-        volumeRatio: this.round(volumeRatio),
-        ema20: this.round(ema20),
-        ema50: this.round(ema50),
+        rsi: this.roundNullableNumber(row.rsi),
+        macdHistogram: this.roundNullableNumber(macdHistogram),
+        volumeRatio: this.roundNullableNumber(volumeRatio),
+        ema20: this.roundNullableNumber(row.ema20),
+        ema50: this.roundNullableNumber(row.ema50),
       },
       candles: {
-        open: this.round(opens[opens.length - 1]),
-        high: this.round(highs[highs.length - 1]),
-        low: this.round(lows[lows.length - 1]),
-        previousHigh: this.round(this.maxFromSeries(highs, 20)),
-        previousLow: this.round(this.minFromSeries(lows, 20)),
+        open: this.round(closePrice),
+        high: this.round(closePrice),
+        low: this.round(closePrice),
+        previousHigh: this.round(closePrice),
+        previousLow: this.round(closePrice),
       },
       source: {
-        provider: 'Yahoo Finance',
-        range: '1d',
-        interval: '1m',
+        provider: 'DATABASE_SNAPSHOT',
+        table: 'market_technical_snapshot',
+        source: row.source,
         cached: false,
-        realTime: true,
-        note: 'Analisis memakai data intraday 1 menit + live quote terbaru.',
+        realTime: false,
+        note: 'Data diambil dari snapshot DB hasil sinkronisasi TradingView.',
       },
     };
 
-    const autoSignals = this.deriveRealtimeSignals(resultPayload);
+    const autoSignals = this.deriveRealtimeSignals(payload);
     const recommendationPayload: StockAnalysisRequestDto = {
-      symbol: resultPayload.symbol,
-      closePrice: resultPayload.closePrice,
-      rsi: resultPayload.indicators.rsi,
-      macdHistogram: resultPayload.indicators.macdHistogram,
-      volumeRatio: resultPayload.indicators.volumeRatio,
+      symbol: payload.symbol,
+      closePrice: payload.closePrice,
+      rsi: payload.indicators.rsi ?? 50,
+      macdHistogram: payload.indicators.macdHistogram ?? 0,
+      volumeRatio: payload.indicators.volumeRatio ?? 1,
       liquiditySweep: autoSignals.liquiditySweep,
       bidOfferImbalance: autoSignals.bidOfferImbalance,
-      ema20: resultPayload.indicators.ema20,
-      ema50: resultPayload.indicators.ema50,
+      ema20: payload.indicators.ema20 ?? payload.closePrice,
+      ema50: payload.indicators.ema50 ?? payload.closePrice,
       foreignFlowBillion: 0,
       brokerNetBuyTop3Billion: 0,
     };
-    const recommendation = this.generateRecommendation(recommendationPayload);
 
-    const responsePayload = {
-      ...resultPayload,
+    const recommendation = this.generateRecommendation(recommendationPayload);
+    return {
+      ...payload,
       recommendation,
       marketBias: recommendation.marketBias,
       strategies: recommendation.strategies,
       tradingView: recommendation.tradingView,
       scoring: recommendation.scoring,
     };
+  }
 
-    this.marketDataCache.set(cacheKey, {
-      data: responsePayload,
-      cachedAt: Date.now(),
-    });
+  private computeDbVolumeRatio(
+    currentVolume: bigint | number | null,
+    previousVolume: bigint | number | null,
+  ) {
+    if (currentVolume === null || previousVolume === null) {
+      return null;
+    }
 
-    return responsePayload;
+    const current =
+      typeof currentVolume === 'bigint' ? Number(currentVolume) : currentVolume;
+    const previous =
+      typeof previousVolume === 'bigint'
+        ? Number(previousVolume)
+        : previousVolume;
+
+    if (!previous || previous <= 0) {
+      return null;
+    }
+
+    return current / previous;
+  }
+
+  private roundNullableNumber(value: number | null | undefined) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    return this.round(value);
   }
 
   private buildDegradedMarketData(symbol: string, reason: string) {
@@ -394,8 +493,8 @@ export class AppService {
 
   async getChartWithIndicators(symbol: string, query: ChartIndicatorQueryDto) {
     const normalized = this.normalizeIdxSymbol(symbol);
-    const interval = query.interval ?? '5m';
-    const range = query.range ?? '5d';
+    const interval: ChartInterval = query.interval ?? '5m';
+    const range: ChartRange = query.range ?? '5d';
     const limit = query.limit ?? 300;
 
     const stylePreset = this.getChartStylePreset(query.style);
@@ -413,7 +512,11 @@ export class AppService {
     }
 
     const emaPeriods = this.parseEmaPeriods(query.emaPeriods);
-    const candles = await this.fetchYahooCandles(normalized, interval, range);
+    const candles = await this.fetchCandlesForChart(
+      normalized,
+      interval,
+      range,
+    );
 
     if (!candles.length) {
       throw new BadRequestException(`Data candle ${normalized} tidak tersedia`);
@@ -577,8 +680,8 @@ export class AppService {
 
   private async fetchYahooCandles(
     symbol: string,
-    interval: '1m' | '5m' | '15m' | '30m' | '60m' | '1d',
-    range: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y',
+    interval: ChartInterval,
+    range: ChartRange,
   ) {
     const chartUrl =
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
@@ -600,14 +703,7 @@ export class AppService {
     const closes = quote.close ?? [];
     const volumes = quote.volume ?? [];
 
-    const candles: Array<{
-      t: string;
-      o: number;
-      h: number;
-      l: number;
-      c: number;
-      v: number;
-    }> = [];
+    const candles: CandlePoint[] = [];
     for (let i = 0; i < timestamps.length; i++) {
       const c = closes[i];
       if (typeof c !== 'number') continue;
@@ -628,6 +724,70 @@ export class AppService {
     }
 
     return candles;
+  }
+
+  private async fetchCandlesForChart(
+    symbol: string,
+    interval: ChartInterval,
+    range: ChartRange,
+  ) {
+    if (interval === '1d') {
+      const dbCandles = await this.fetchDbDailyCandles(symbol, range);
+      if (dbCandles.length > 0) {
+        return dbCandles;
+      }
+    }
+
+    return this.fetchYahooCandles(symbol, interval, range);
+  }
+
+  private async fetchDbDailyCandles(symbol: string, range: ChartRange) {
+    const normalizedSymbol = symbol.toUpperCase().replace('.JK', '').trim();
+    const fromDate = new Date(
+      Date.now() - this.getRangeDays(range) * 24 * 60 * 60 * 1000,
+    );
+
+    const rows = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
+      SELECT
+        price_at,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        volume
+      FROM market_price_history
+      WHERE source = 'YAHOO'
+        AND symbol = ${normalizedSymbol}
+        AND timeframe = '1D'
+        AND price_at >= ${fromDate}
+      ORDER BY price_at ASC
+    `;
+
+    return rows
+      .filter((row) => row.close_price !== null)
+      .map((row) => ({
+        t: row.price_at.toISOString(),
+        o: row.open_price ?? row.close_price ?? 0,
+        h: row.high_price ?? row.close_price ?? 0,
+        l: row.low_price ?? row.close_price ?? 0,
+        c: row.close_price ?? 0,
+        v:
+          typeof row.volume === 'bigint'
+            ? Number(row.volume)
+            : (row.volume ?? 0),
+      }));
+  }
+
+  private getRangeDays(range: ChartRange) {
+    if (range === '1d') return 1;
+    if (range === '5d') return 5;
+    if (range === '1mo') return 31;
+    if (range === '3mo') return 92;
+    if (range === '6mo') return 183;
+    if (range === '1y') return 366;
+    if (range === '2y') return 732;
+    if (range === '5y') return 1830;
+    return 3660;
   }
 
   private getChartStylePreset(style?: 'daily' | 'swing' | 'scalping') {

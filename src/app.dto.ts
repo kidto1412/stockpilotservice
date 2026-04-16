@@ -160,8 +160,8 @@ export class ChartIndicatorQueryDto {
   interval?: '1m' | '5m' | '15m' | '30m' | '60m' | '1d';
 
   @IsOptional()
-  @IsIn(['1d', '5d', '1mo', '3mo', '6mo', '1y'])
-  range?: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y';
+  @IsIn(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y'])
+  range?: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y' | '2y' | '5y' | '10y';
 
   @IsOptional()
   @IsIn(['daily', 'swing', 'scalping'])
@@ -226,4 +226,17 @@ export class ChartIndicatorQueryDto {
   @IsOptional()
   @IsString()
   emaPeriods?: string;
+}
+
+export class MarketDataListQueryDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  limit = 200;
 }

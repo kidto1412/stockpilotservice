@@ -17,6 +17,8 @@ class Settings:
     sync_interval_min: int
     tradingview_all_page_size: int
     tradingview_all_max_rows: int
+    history_backfill_years: int
+    history_incremental_days: int
 
 
 def parse_symbols(raw: str) -> List[str]:
@@ -43,4 +45,6 @@ def get_settings() -> Settings:
         sync_interval_min=int(os.getenv("SYNC_INTERVAL_MIN", "30")),
         tradingview_all_page_size=int(os.getenv("TRADINGVIEW_ALL_PAGE_SIZE", "500")),
         tradingview_all_max_rows=int(os.getenv("TRADINGVIEW_ALL_MAX_ROWS", "3000")),
+        history_backfill_years=int(os.getenv("HISTORY_BACKFILL_YEARS", "10")),
+        history_incremental_days=int(os.getenv("HISTORY_INCREMENTAL_DAYS", "30")),
     )

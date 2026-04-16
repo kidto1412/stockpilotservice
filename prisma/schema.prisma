@@ -65,3 +65,22 @@ model MarketSyncRunLog {
   @@index([source, createdAt], map: "sync_run_log_source_created_at_idx")
   @@map("sync_run_log")
 }
+
+model MarketPriceHistory {
+  id         BigInt   @id @default(autoincrement()) @db.BigInt
+  source     String
+  symbol     String
+  timeframe  String
+  priceAt    DateTime @map("price_at") @db.Timestamptz(6)
+  openPrice  Float?   @map("open_price")
+  highPrice  Float?   @map("high_price")
+  lowPrice   Float?   @map("low_price")
+  closePrice Float?   @map("close_price")
+  volume     BigInt?  @db.BigInt
+  rawPayload Json     @map("raw_payload")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([source, symbol, timeframe, priceAt], map: "market_price_history_source_symbol_timeframe_price_at_key")
+  @@index([symbol, timeframe, priceAt], map: "market_price_history_symbol_timeframe_price_at_idx")
+  @@map("market_price_history")
+}

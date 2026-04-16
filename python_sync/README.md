@@ -3,9 +3,10 @@
 ## Tujuan
 
 - Ambil data teknikal (OHLCV, RSI, MACD, EMA, volume) dari endpoint TradingView scanner.
+- Ambil data candle harian historis multi-tahun (default 10 tahun) dari Yahoo Finance chart API.
 - Ambil news & artikel dari RSS feed Bisnis.com (gratis unlimited).
 - Scan semua saham IDX atau symbols pilihan.
-- Simpan ke DB PostgreSQL sendiri (tabel `market_technical_snapshot`, `market_event_official`).
+- Simpan ke DB PostgreSQL sendiri (tabel `market_technical_snapshot`, `market_price_history`, `market_event_official`).
 - Jalankan sinkronisasi berkala tanpa scraping HTML frontend.
 
 Arsitektur Ringkas
@@ -15,18 +16,26 @@ Arsitektur Ringkas
    - Ambil snapshot teknikal semua saham IDX (kolom: close, volume, RSI, MACD, EMA20, EMA50)
    - Upsert ke: `market_technical_snapshot`
 
-2. **Bisnis.com RSS source**
+2. **Yahoo History source**
+   - GET ke endpoint chart Yahoo Finance
+   - Simpan candle OHLCV harian multi-tahun
+   - Full sync: backfill default 10 tahun
+   - Sync interval: incremental default 30 hari terakhir
+   - Upsert ke: `market_price_history`
+
+3. **Bisnis.com RSS source**
    - Fetch RSS dari `https://bisnis.com/feed/rss.xml`
    - Extract symbols dari title/description (pattern: BBCA, TLKM, ASII, dll)
    - Normalize ke format: source=BISNIS_COM, event_type=OFFICIAL_NEWS
    - Upsert ke: `market_event_official`
 
-3. **Storage**
+4. **Storage**
    - `market_technical_snapshot`: teknikal snapshots
+   - `market_price_history`: candle history harian
    - `market_event_official`: news & events
    - `sync_run_log`: sync status log per source
 
-4. **Scheduler**
+5. **Scheduler**
    - Mode sekali jalan (`python sync_market_data.py --full-sync`)
    - Mode interval menit (`python sync_market_data.py --interval-min 15`)
    - Opsional cron/systemd di server
@@ -34,6 +43,7 @@ Arsitektur Ringkas
 Struktur File
 
 - `sync_market_data.py`: Entrypoint CLI + scheduler loop (TradingView + Bisnis.com)
+- `sources/yahoo_history_source.py`: Yahoo chart fetcher untuk candle history harian
 - `config.py`: Environment config (DATABASE_URL, endpoint URLs, timeout, interval)
 - `db.py`: DDL + upsert operations + sync logging
 - `sources/tradingview_source.py`: TradingView scanner request + normalisasi teknikal
@@ -56,6 +66,8 @@ Persiapan
      - SYNC_INTERVAL_MIN (default: 30 menit)
      - TRADINGVIEW_ALL_PAGE_SIZE (default: 500)
      - TRADINGVIEW_ALL_MAX_ROWS (default: 3000)
+   - HISTORY_BACKFILL_YEARS (default: 10)
+   - HISTORY_INCREMENTAL_DAYS (default: 30)
 
 Jalankan Sinkron Sekali (tulisan symbols optional)
 
@@ -69,16 +81,30 @@ Jalankan Full Sync Pertama Kali (Semua saham IDX, auto-scan)
 python python_sync/sync_market_data.py --full-sync
 ```
 
+Jalankan Full Sync + Backfill 15 Tahun
+
+```bash
+python python_sync/sync_market_data.py --full-sync --history-years 15
+```
+
 Jalankan Berkala (setiap 15 menit)
 
 ```bash
 python python_sync/sync_market_data.py --interval-min 15
 ```
 
+Jalankan tanpa history (hanya snapshot teknikal + news)
+
+```bash
+python python_sync/sync_market_data.py --interval-min 15 --skip-history
+```
+
 **Catatan:**
 
 - Jika `--symbols` dikosongkan → auto-scan semua saham IDX
 - `--full-sync` → scan semua saham: technical snapshot + latest news dari Bisnis.com
+- `--full-sync` → scan semua saham + backfill candle history multi-tahun
+- Tanpa `--full-sync`, history tetap diupdate incremental (default 30 hari)
 
 **Contoh Cron (setiap 15 menit, setiap hari):**
 
@@ -119,6 +145,7 @@ Catatan & Troubleshooting
 
    ```sql
    SELECT COUNT(*) FROM market_technical_snapshot;
+   SELECT COUNT(*) FROM market_price_history;
    SELECT COUNT(*) FROM market_event_official WHERE source='BISNIS_COM';
    SELECT source, status, message, created_at FROM sync_run_log ORDER BY created_at DESC LIMIT 10;
    ```

@@ -12,6 +12,7 @@ import {
 
 export type RecommendationStyle = 'DAILY' | 'SWING' | 'SCALPING';
 export type RecommendationMode = 'COMBINED' | 'MACD_STOCH' | 'LIQUIDITY_SWEEP';
+export type RecommendationTimeframe = '1D' | '15m' | '5m';
 
 export class TechnicalQueryDto {
   @IsOptional()
@@ -94,6 +95,10 @@ export class RecommendationListQueryDto {
   mode: RecommendationMode = 'COMBINED';
 
   @IsOptional()
+  @IsIn(['1D', '15m', '5m'])
+  timeframe?: RecommendationTimeframe;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -117,4 +122,11 @@ export class RecommendationListQueryDto {
   @Min(0)
   @Max(10)
   minVolumeRatio?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  crossLookback?: number;
 }

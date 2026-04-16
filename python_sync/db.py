@@ -59,6 +59,25 @@ CREATE TABLE IF NOT EXISTS sync_run_log (
     message TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS market_price_history (
+    id BIGSERIAL PRIMARY KEY,
+    source TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    price_at TIMESTAMPTZ NOT NULL,
+    open_price DOUBLE PRECISION,
+    high_price DOUBLE PRECISION,
+    low_price DOUBLE PRECISION,
+    close_price DOUBLE PRECISION,
+    volume BIGINT,
+    raw_payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (source, symbol, timeframe, price_at)
+);
+
+CREATE INDEX IF NOT EXISTS market_price_history_symbol_timeframe_price_at_idx
+    ON market_price_history(symbol, timeframe, price_at);
 """
 
 
@@ -124,6 +143,39 @@ def insert_official_events(
         symbol = EXCLUDED.symbol,
         title = EXCLUDED.title,
         event_date = EXCLUDED.event_date,
+        raw_payload = EXCLUDED.raw_payload;
+    """
+
+    count = 0
+    with conn.cursor() as cur:
+        for row in rows:
+            row = dict(row)
+            row["raw_payload"] = Jsonb(row.get("raw_payload"))
+            cur.execute(query, row)
+            count += 1
+    conn.commit()
+    return count
+
+
+def insert_price_history(
+    conn: psycopg.Connection,
+    rows: Iterable[Dict[str, Any]],
+) -> int:
+    query = """
+    INSERT INTO market_price_history (
+        source, symbol, timeframe, price_at,
+        open_price, high_price, low_price, close_price, volume, raw_payload
+    ) VALUES (
+        %(source)s, %(symbol)s, %(timeframe)s, %(price_at)s,
+        %(open_price)s, %(high_price)s, %(low_price)s, %(close_price)s, %(volume)s, %(raw_payload)s
+    )
+    ON CONFLICT (source, symbol, timeframe, price_at)
+    DO UPDATE SET
+        open_price = EXCLUDED.open_price,
+        high_price = EXCLUDED.high_price,
+        low_price = EXCLUDED.low_price,
+        close_price = EXCLUDED.close_price,
+        volume = EXCLUDED.volume,
         raw_payload = EXCLUDED.raw_payload;
     """
 

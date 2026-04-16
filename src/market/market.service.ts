@@ -6,6 +6,7 @@ import {
   RecommendationListQueryDto,
   RecommendationMode,
   RecommendationStyle,
+  RecommendationTimeframe,
   SyncStatusQueryDto,
   TechnicalQueryDto,
 } from './dto/market-query.dto';
@@ -183,10 +184,13 @@ export class MarketService {
     const normalizedSource = (query.source ?? 'TRADINGVIEW').toUpperCase();
     const style = query.style ?? 'SWING';
     const mode = query.mode ?? 'COMBINED';
+    const timeframe = query.timeframe ?? this.getDefaultTimeframeByStyle(style);
     const styleConfig = this.getStyleConfig(style, query.stochSetting);
     const stochBuyThreshold =
       query.stochBuyThreshold ?? styleConfig.stochBuyThreshold;
     const minVolumeRatio = query.minVolumeRatio ?? styleConfig.minVolumeRatio;
+    const crossLookback =
+      query.crossLookback ?? this.getDefaultLookbackByTimeframe(timeframe);
 
     const rows = await this.prisma.$queryRaw<
       RecommendationBaseRow[]
@@ -251,18 +255,63 @@ export class MarketService {
       .sort((a, b) => b.score - a.score)
       .slice(0, query.limit);
 
+    const finalPicked =
+      picked.length > 0
+        ? picked
+        : rows
+            .map((row) =>
+              this.buildRecommendationState(row, style, mode, {
+                stochasticSetting: styleConfig.stochasticSetting,
+                stochBuyThreshold,
+                minVolumeRatio,
+              }),
+            )
+            .filter((item) => item.isMatch)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, query.limit);
+
     return {
       config: {
         source: normalizedSource,
         style,
+        timeframe,
         mode,
         stochasticSetting: styleConfig.stochasticSetting,
         stochBuyThreshold,
         minVolumeRatio,
+        crossLookback,
+        matchPolicy: picked.length > 0 ? 'STRICT_CROSS' : 'STATE_FALLBACK',
       },
-      count: picked.length,
-      items: picked.map((item) => item.payload),
+      count: finalPicked.length,
+      items: finalPicked.map((item) => item.payload),
     };
+  }
+
+  private getDefaultTimeframeByStyle(
+    style: RecommendationStyle,
+  ): RecommendationTimeframe {
+    if (style === 'SWING') {
+      return '1D';
+    }
+
+    if (style === 'SCALPING') {
+      return '5m';
+    }
+
+    // DAILY pada API ini diposisikan sebagai day-trade intraday.
+    return '15m';
+  }
+
+  private getDefaultLookbackByTimeframe(timeframe: RecommendationTimeframe) {
+    if (timeframe === '1D') {
+      return 20;
+    }
+
+    if (timeframe === '15m') {
+      return 12;
+    }
+
+    return 8;
   }
 
   private buildTechnicalWhere(query: TechnicalQueryDto): Prisma.Sql {
@@ -410,6 +459,90 @@ export class MarketService {
         rule: {
           mode,
           stochasticSetting: styleConfig.stochasticSetting,
+          signalType: 'STRICT_CROSS',
+        },
+      },
+    };
+  }
+
+  private buildRecommendationState(
+    row: RecommendationBaseRow,
+    style: RecommendationStyle,
+    mode: RecommendationMode,
+    styleConfig: {
+      stochasticSetting: string;
+      stochBuyThreshold: number;
+      minVolumeRatio: number;
+    },
+  ) {
+    const stochK = this.getStochValue(row.raw_payload, 8);
+    const stochD = this.getStochValue(row.raw_payload, 9);
+
+    const macdBullish =
+      row.macd !== null &&
+      row.macd_signal !== null &&
+      row.macd > row.macd_signal;
+
+    const stochBullish =
+      stochK !== null &&
+      stochD !== null &&
+      stochK > stochD &&
+      stochK <= styleConfig.stochBuyThreshold;
+
+    const volumeRatio = this.getVolumeRatio(row.volume, row.prev_volume);
+    const liquiditySweepBullish =
+      row.close_price !== null &&
+      row.ema20 !== null &&
+      row.prev_close_price !== null &&
+      row.prev_ema20 !== null &&
+      row.prev_close_price <= row.prev_ema20 &&
+      row.close_price > row.ema20 &&
+      volumeRatio !== null &&
+      volumeRatio >= styleConfig.minVolumeRatio;
+
+    const isMatch = this.matchMode({
+      mode,
+      macdGoldenCross: macdBullish,
+      stochGoldenCross: stochBullish,
+      liquiditySweepBullish,
+    });
+
+    const score =
+      (macdBullish ? 30 : 0) +
+      (stochBullish ? 25 : 0) +
+      (liquiditySweepBullish ? 20 : 0) +
+      (row.rsi !== null && row.rsi >= 45 && row.rsi <= 70 ? 10 : 0);
+
+    return {
+      isMatch,
+      score,
+      payload: {
+        symbol: row.symbol,
+        source: row.source,
+        snapshotAt: row.snapshot_at,
+        style,
+        score,
+        signal: isMatch ? 'BUY_CANDIDATE' : 'WAIT',
+        indicators: {
+          closePrice: row.close_price,
+          rsi: row.rsi,
+          macd: row.macd,
+          macdSignal: row.macd_signal,
+          stochK,
+          stochD,
+          ema20: row.ema20,
+          ema50: row.ema50,
+          volumeRatio,
+        },
+        checks: {
+          macdGoldenCross: macdBullish,
+          stochGoldenCross: stochBullish,
+          liquiditySweepBullish,
+        },
+        rule: {
+          mode,
+          stochasticSetting: styleConfig.stochasticSetting,
+          signalType: 'STATE_FALLBACK',
         },
       },
     };

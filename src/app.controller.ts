@@ -13,6 +13,7 @@ import { AppService } from './app.service';
 import {
   AutoRecommendationRequestDto,
   ChartIndicatorQueryDto,
+  MarketDataListQueryDto,
   StockAnalysisRequestDto,
   TrainMlModelRequestDto,
 } from './app.dto';
@@ -38,6 +39,12 @@ export class AppController {
   @Post('stock-analysis/recommendation/auto')
   getAutoRecommendation(@Body() payload: AutoRecommendationRequestDto) {
     return this.appService.generateAutoRecommendation(payload);
+  }
+
+  @Public()
+  @Get('stock-analysis/market-data')
+  getMarketDataList(@Query() query: MarketDataListQueryDto) {
+    return this.appService.getMarketDataList(query);
   }
 
   @Public()
