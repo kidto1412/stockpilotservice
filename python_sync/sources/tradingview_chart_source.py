@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import re
 import string
@@ -97,10 +98,7 @@ def _fetch_symbol_daily_candles(
     ws = websocket.create_connection(
         _WS_URL,
         timeout=max(timeout_sec, _WS_TIMEOUT_SEC),
-        header=[
-            "Origin: https://www.tradingview.com",
-            "User-Agent: Mozilla/5.0",
-        ],
+        header=_build_ws_headers(),
     )
 
     try:
@@ -263,3 +261,14 @@ def _normalize_symbols(symbols: list[str]) -> List[str]:
             if item and item.strip()
         }
     )
+
+
+def _build_ws_headers() -> List[str]:
+    headers = [
+        "Origin: https://www.tradingview.com",
+        "User-Agent: Mozilla/5.0",
+    ]
+    cookie = os.getenv("TRADINGVIEW_COOKIE", "").strip()
+    if cookie:
+        headers.append(f"Cookie: {cookie}")
+    return headers
