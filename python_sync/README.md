@@ -16,14 +16,20 @@ Arsitektur Ringkas
    - Ambil snapshot teknikal semua saham IDX (kolom: close, volume, RSI, MACD, EMA20, EMA50)
    - Upsert ke: `market_technical_snapshot`
 
-2. **Yahoo History source**
-   - GET ke endpoint chart Yahoo Finance
-   - Simpan candle OHLCV harian multi-tahun
-   - Full sync: backfill default 10 tahun
-   - Sync interval: incremental default 30 hari terakhir
-   - Upsert ke: `market_price_history`
+2. **TradingView Chart source**
+   - Fetch OHLCV historis daily multi-tahun dari https://charts-node.tradingview.com (unofficial API)
+   - Stable, tidak rate-limited, resmi dari TradingView
+   - Primary source untuk chart history backfill
+   - Fallback ke Yahoo Finance jika TradingView gagal
+   - Upsert ke: `market_price_history` (source=TRADINGVIEW)
 
-3. **Bisnis.com RSS source**
+3. **Yahoo Finance History source** (legacy, fallback only)
+   - Endpoint: https://query1.finance.yahoo.com (+ query2)
+   - Fallback jika TradingView gagal
+   - Rate-limited (sering 429), graceful error handling
+   - Upsert ke: `market_price_history` (source=YAHOO)
+
+4. **Bisnis.com RSS source**
    - Fetch RSS dari `https://bisnis.com/feed/rss.xml`
    - Extract symbols dari title/description (pattern: BBCA, TLKM, ASII, dll)
    - Normalize ke format: source=BISNIS_COM, event_type=OFFICIAL_NEWS
@@ -146,6 +152,17 @@ Catatan & Troubleshooting
 - Rate limit: Unlimited (unofficial endpoint)
 - Status: Stable, tidak ada 403 Cloudflare
 
+**Yahoo Finance History (optional):**
+
+- Endpoint: `https://query1.finance.yahoo.com/v8/finance/chart/` + fallback `query2`
+- Method: GET chart API
+- Data: OHLCV historis daily multi-tahun
+- Rate limit: **Restricted** (sering 429 untuk bulk backfill)
+- Status: Unstable untuk backfill masif, auto-graceful pada error
+- **Fallback**: Jika Yahoo error terus, history batch di-skip (log warning), sync lanjut tanpa crash
+  - Chart endpoint tetap berfungsi: fallback ke snapshot teknikal TradingView (limited recent data)
+  - Rekomendasi tetap berfungsi: menggunakan snapshot teknikal terbaru
+
 **Bisnis.com RSS:**
 
 - Endpoint: `https://bisnis.com/feed/rss.xml`
@@ -155,6 +172,27 @@ Catatan & Troubleshooting
 - Rate limit: Unlimited (RSS feed gratis)
 - Status: Stable, tidak perlu API key / registration
 - Stored as: event_type=OFFICIAL_NEWS, source=BISNIS_COM di tabel `market_event_official`
+
+**Strategi Jika Yahoo 429 Masalah:**
+
+1. **Default behavior (RECOMMENDED)**: Gunakan TradingView chart auto-fallback
+   ```bash
+   python python_sync/sync_market_data.py --full-sync
+   ```
+   → Coba TradingView dulu, jika gagal fallback ke Yahoo, jika keduanya gagal skip batch
+   → Chart endpoint: TradingView > Yahoo > Snapshot fallback (intraday)
+   → Tidak crash, lanjut sync Bisnis news
+
+2. **Skip data fetch selamanya** (gunakan hanya latest snapshot):
+   ```bash
+   python python_sync/sync_market_data.py --full-sync --skip-history
+   ```
+   → Hanya ambil snapshot teknikal terbaru, tidak ada history
+   → Chart fallback ke 30 recent intraday snapshot TradingView
+
+3. **Tunggu akses stabil kembali**:
+   - Jika TradingView/Yahoo ramai, coba lagi nanti
+   - Jalankan ulang `--full-sync` untuk backfill
 
 **Validasi Cepat:**
 

@@ -17,6 +17,7 @@ from db import (
     log_sync_run,
 )
 from sources.tradingview_source import fetch_tradingview_snapshots
+from sources.tradingview_chart_source import fetch_tradingview_daily_candles
 from sources.bisnis_source import fetch_bisnis_news
 from sources.yahoo_history_source import (
     fetch_yahoo_daily_history,
@@ -48,11 +49,10 @@ def run_once(
             )
         synced_symbols = _run_tradingview(conn, settings, symbols)
         if include_history and synced_symbols:
-            _run_daily_history(
+            _run_daily_chart(
                 conn,
                 settings,
                 synced_symbols,
-                full_sync=full_sync,
                 history_years=history_years,
                 batch_size=history_batch_size,
             )
@@ -87,6 +87,119 @@ def _run_tradingview(conn, settings, symbols: List[str]) -> List[str]:
         log_sync_run(conn, run)
 
 
+def _run_daily_chart(
+    conn,
+    settings,
+    symbols: List[str],
+    history_years: int = 10,
+    batch_size: int = 50,
+) -> None:
+    """Fetch chart data dari TradingView (primary) atau Yahoo (fallback)."""
+    started = datetime.now(timezone.utc)
+    run = SyncRun(source="CHART_HISTORY", started_at=started, status="SUCCESS", message="OK")
+
+    try:
+        symbol_batches = _split_into_batches(symbols, batch_size)
+        total_rows = 0
+        total_batches = len(symbol_batches)
+        tv_success = 0
+        tv_failed = 0
+
+        for batch_num, batch_symbols in enumerate(symbol_batches, start=1):
+            try:
+                # Priority 1: TradingView chart (stable, no rate-limit)
+                logger.info(
+                    "Chart batch %d/%d: trying TradingView source (primary)...",
+                    batch_num,
+                    total_batches,
+                )
+                try:
+                    batch_rows = fetch_tradingview_daily_candles(
+                        symbols=batch_symbols,
+                        timeout_sec=settings.request_timeout_sec,
+                        years=history_years,
+                    )
+                    if batch_rows:
+                        tv_success += 1
+                        batch_total = insert_price_history(conn, batch_rows)
+                        total_rows += batch_total
+                        logger.info(
+                            "Chart batch %d/%d (TradingView): +%d rows, symbols=%d",
+                            batch_num,
+                            total_batches,
+                            batch_total,
+                            len(batch_symbols),
+                        )
+                    else:
+                        raise RuntimeError("TradingView returned empty candles")
+
+                except Exception as tv_exc:
+                    tv_failed += 1
+                    logger.warning(
+                        "Chart batch %d/%d: TradingView failed, trying Yahoo fallback... (error: %s)",
+                        batch_num,
+                        total_batches,
+                        str(tv_exc)[:80],
+                    )
+
+                    # Fallback ke Yahoo
+                    try:
+                        end_at = datetime.now(timezone.utc)
+                        start_at = end_at - timedelta(days=max(history_years * 365, 1))
+                        batch_rows = fetch_yahoo_daily_history_between(
+                            symbols=batch_symbols,
+                            timeout_sec=settings.request_timeout_sec,
+                            start_at=start_at,
+                            end_at=end_at,
+                            retry_max=settings.yahoo_retry_max,
+                            min_delay_sec=settings.yahoo_min_delay_sec,
+                            max_delay_sec=settings.yahoo_max_delay_sec,
+                            backoff_base_sec=settings.yahoo_backoff_base_sec,
+                        )
+                        if batch_rows:
+                            batch_total = insert_price_history(conn, batch_rows)
+                            total_rows += batch_total
+                            logger.info(
+                                "Chart batch %d/%d (Yahoo fallback): +%d rows, symbols=%d",
+                                batch_num,
+                                total_batches,
+                                batch_total,
+                                len(batch_symbols),
+                            )
+                    except Exception as fallback_exc:
+                        logger.warning(
+                            "Chart batch %d/%d: both TradingView + Yahoo failed, skip this batch (reason: %s)",
+                            batch_num,
+                            total_batches,
+                            str(fallback_exc)[:80],
+                        )
+
+                # Throttle antar batch
+                if batch_num < total_batches:
+                    time.sleep(0.5)
+
+            except Exception as batch_exc:
+                logger.warning(
+                    "Chart batch %d/%d outer error (skip to next): %s",
+                    batch_num,
+                    total_batches,
+                    str(batch_exc)[:100],
+                )
+
+        run.message = f"BACKFILL_{history_years}Y upsert candle rows: {total_rows}, symbols={len(symbols)}, TV_success={tv_success}, TV_failed={tv_failed}"
+        logger.info("Chart history sync: %s", run.message)
+    except Exception as exc:
+        logger.warning(
+            "Chart history sync outer error (non-fatal, lanjut sync): %s",
+            str(exc)[:150],
+        )
+        run.status = "SUCCESS"
+        run.message = f"PARTIAL (error: {str(exc)[:80]})"
+    finally:
+        run.finished_at = datetime.now(timezone.utc)
+        log_sync_run(conn, run)
+
+
 def _run_daily_history(
     conn,
     settings,
@@ -95,76 +208,8 @@ def _run_daily_history(
     history_years: int,
     batch_size: int = 50,
 ) -> None:
-    started = datetime.now(timezone.utc)
-    run = SyncRun(source="YAHOO_HISTORY", started_at=started, status="SUCCESS", message="OK")
-
-    try:
-        if full_sync:
-            mode = f"BACKFILL_{history_years}Y"
-        else:
-            mode = f"INCREMENTAL_{settings.history_incremental_days}D"
-
-        symbol_batches = _split_into_batches(symbols, batch_size)
-        total_rows = 0
-        total_batches = len(symbol_batches)
-
-        for batch_num, batch_symbols in enumerate(symbol_batches, start=1):
-            try:
-                if full_sync:
-                    batch_rows = fetch_yahoo_daily_history(
-                        symbols=batch_symbols,
-                        timeout_sec=settings.request_timeout_sec,
-                        years=history_years,
-                        retry_max=settings.yahoo_retry_max,
-                        min_delay_sec=settings.yahoo_min_delay_sec,
-                        max_delay_sec=settings.yahoo_max_delay_sec,
-                        backoff_base_sec=settings.yahoo_backoff_base_sec,
-                    )
-                else:
-                    end_at = datetime.now(timezone.utc)
-                    start_at = end_at - timedelta(days=max(settings.history_incremental_days, 1))
-                    batch_rows = fetch_yahoo_daily_history_between(
-                        symbols=batch_symbols,
-                        timeout_sec=settings.request_timeout_sec,
-                        start_at=start_at,
-                        end_at=end_at,
-                        retry_max=settings.yahoo_retry_max,
-                        min_delay_sec=settings.yahoo_min_delay_sec,
-                        max_delay_sec=settings.yahoo_max_delay_sec,
-                        backoff_base_sec=settings.yahoo_backoff_base_sec,
-                    )
-
-                batch_total = insert_price_history(conn, batch_rows)
-                total_rows += batch_total
-                logger.info(
-                    "Yahoo history batch %d/%d selesai: +%d rows, symbols=%d",
-                    batch_num,
-                    total_batches,
-                    batch_total,
-                    len(batch_symbols),
-                )
-
-                # Throttle antar batch agar provider breathing room.
-                if batch_num < total_batches:
-                    time.sleep(0.5)
-
-            except Exception as batch_exc:
-                logger.warning(
-                    "Yahoo history batch %d/%d gagal: %s (skip lanjut batch berikutnya)",
-                    batch_num,
-                    total_batches,
-                    str(batch_exc),
-                )
-
-        run.message = f"{mode} upsert candle rows: {total_rows}, symbols={len(symbols)}, batches={total_batches}"
-        logger.info("Yahoo history sync selesai: %s", run.message)
-    except Exception as exc:
-        run.status = "FAILED"
-        run.message = str(exc)
-        logger.exception("Yahoo history sync gagal")
-    finally:
-        run.finished_at = datetime.now(timezone.utc)
-        log_sync_run(conn, run)
+    """Legacy history sync (unused, kept for compatibility)."""
+    logger.info("History sync (legacy) skipped: use chart sync instead")
 
 
 def _run_bisnis_news(conn, settings) -> None:

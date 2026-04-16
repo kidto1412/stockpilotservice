@@ -747,7 +747,41 @@ export class AppService {
       Date.now() - this.getRangeDays(range) * 24 * 60 * 60 * 1000,
     );
 
-    const rows = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
+    // Priority 1: TradingView chart data (primary source)
+    const tvCandles = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
+      SELECT
+        price_at,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        volume
+      FROM market_price_history
+      WHERE source = 'TRADINGVIEW'
+        AND symbol = ${normalizedSymbol}
+        AND timeframe = '1D'
+        AND price_at >= ${fromDate}
+      ORDER BY price_at ASC
+    `;
+
+    if (tvCandles.length > 0) {
+      return tvCandles
+        .filter((row) => row.close_price !== null)
+        .map((row) => ({
+          t: row.price_at.toISOString(),
+          o: row.open_price ?? row.close_price ?? 0,
+          h: row.high_price ?? row.close_price ?? 0,
+          l: row.low_price ?? row.close_price ?? 0,
+          c: row.close_price ?? 0,
+          v:
+            typeof row.volume === 'bigint'
+              ? Number(row.volume)
+              : (row.volume ?? 0),
+        }));
+    }
+
+    // Priority 2: Yahoo fallback
+    const yahooCandles = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
       SELECT
         price_at,
         open_price,
@@ -763,13 +797,50 @@ export class AppService {
       ORDER BY price_at ASC
     `;
 
+    if (yahooCandles.length > 0) {
+      return yahooCandles
+        .filter((row) => row.close_price !== null)
+        .map((row) => ({
+          t: row.price_at.toISOString(),
+          o: row.open_price ?? row.close_price ?? 0,
+          h: row.high_price ?? row.close_price ?? 0,
+          l: row.low_price ?? row.close_price ?? 0,
+          c: row.close_price ?? 0,
+          v:
+            typeof row.volume === 'bigint'
+              ? Number(row.volume)
+              : (row.volume ?? 0),
+        }));
+    }
+
+    // Priority 3: TradingView snapshot fallback (last 30 recent snapshots)
+    return this.generateFallbackFromSnapshot(normalizedSymbol);
+  }
+
+  private async generateFallbackFromSnapshot(symbol: string) {
+    const rows = await this.prisma.$queryRaw<DbMarketRow[]>`
+      SELECT
+        snapshot_at,
+        close_price,
+        volume
+      FROM market_technical_snapshot
+      WHERE source = 'TRADINGVIEW'
+        AND symbol = ${symbol}
+      ORDER BY snapshot_at DESC
+      LIMIT 30
+    `;
+
+    if (rows.length === 0) {
+      return [];
+    }
+
     return rows
-      .filter((row) => row.close_price !== null)
+      .reverse()
       .map((row) => ({
-        t: row.price_at.toISOString(),
-        o: row.open_price ?? row.close_price ?? 0,
-        h: row.high_price ?? row.close_price ?? 0,
-        l: row.low_price ?? row.close_price ?? 0,
+        t: row.snapshot_at.toISOString(),
+        o: row.close_price ?? 0,
+        h: row.close_price ?? 0,
+        l: row.close_price ?? 0,
         c: row.close_price ?? 0,
         v:
           typeof row.volume === 'bigint'
