@@ -72,6 +72,7 @@ Persiapan
    - YAHOO_BACKOFF_BASE_SEC (default: 1.5)
    - YAHOO_MIN_DELAY_SEC (default: 0.2)
    - YAHOO_MAX_DELAY_SEC (default: 0.8)
+   - HISTORY_BATCH_SIZE (default: 50)
 
 Jalankan Sinkron Sekali (tulisan symbols optional)
 
@@ -89,6 +90,18 @@ Jalankan Full Sync + Backfill 15 Tahun
 
 ```bash
 python python_sync/sync_market_data.py --full-sync --history-years 15
+```
+
+Jalankan Full Sync Dengan Auto-Batching (100 simbol/batch)
+
+```bash
+python python_sync/sync_market_data.py --full-sync --history-years 10 --history-batch-size 100
+```
+
+Jalankan Full Sync Dengan Batching Kecil (25 simbol/batch, untuk server ketat rate-limit)
+
+```bash
+python python_sync/sync_market_data.py --full-sync --history-years 10 --history-batch-size 25
 ```
 
 Jalankan Berkala (setiap 15 menit)

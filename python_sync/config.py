@@ -23,6 +23,7 @@ class Settings:
     yahoo_backoff_base_sec: float
     yahoo_min_delay_sec: float
     yahoo_max_delay_sec: float
+    history_batch_size: int
 
 
 def parse_symbols(raw: str) -> List[str]:
@@ -55,4 +56,5 @@ def get_settings() -> Settings:
         yahoo_backoff_base_sec=float(os.getenv("YAHOO_BACKOFF_BASE_SEC", "1.5")),
         yahoo_min_delay_sec=float(os.getenv("YAHOO_MIN_DELAY_SEC", "0.2")),
         yahoo_max_delay_sec=float(os.getenv("YAHOO_MAX_DELAY_SEC", "0.8")),
+        history_batch_size=int(os.getenv("HISTORY_BATCH_SIZE", "50")),
     )

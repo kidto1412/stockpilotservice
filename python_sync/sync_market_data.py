@@ -36,6 +36,7 @@ def run_once(
     full_sync: bool = False,
     history_years: int = 10,
     include_history: bool = True,
+    history_batch_size: int = 50,
 ) -> None:
     settings = get_settings()
     with connect(settings.database_url) as conn:
@@ -53,6 +54,7 @@ def run_once(
                 synced_symbols,
                 full_sync=full_sync,
                 history_years=history_years,
+                batch_size=history_batch_size,
             )
         _run_bisnis_news(conn, settings)
 
@@ -91,39 +93,70 @@ def _run_daily_history(
     symbols: List[str],
     full_sync: bool,
     history_years: int,
+    batch_size: int = 50,
 ) -> None:
     started = datetime.now(timezone.utc)
     run = SyncRun(source="YAHOO_HISTORY", started_at=started, status="SUCCESS", message="OK")
 
     try:
         if full_sync:
-            rows = fetch_yahoo_daily_history(
-                symbols=symbols,
-                timeout_sec=settings.request_timeout_sec,
-                years=history_years,
-                retry_max=settings.yahoo_retry_max,
-                min_delay_sec=settings.yahoo_min_delay_sec,
-                max_delay_sec=settings.yahoo_max_delay_sec,
-                backoff_base_sec=settings.yahoo_backoff_base_sec,
-            )
             mode = f"BACKFILL_{history_years}Y"
         else:
-            end_at = datetime.now(timezone.utc)
-            start_at = end_at - timedelta(days=max(settings.history_incremental_days, 1))
-            rows = fetch_yahoo_daily_history_between(
-                symbols=symbols,
-                timeout_sec=settings.request_timeout_sec,
-                start_at=start_at,
-                end_at=end_at,
-                retry_max=settings.yahoo_retry_max,
-                min_delay_sec=settings.yahoo_min_delay_sec,
-                max_delay_sec=settings.yahoo_max_delay_sec,
-                backoff_base_sec=settings.yahoo_backoff_base_sec,
-            )
             mode = f"INCREMENTAL_{settings.history_incremental_days}D"
 
-        total = insert_price_history(conn, rows)
-        run.message = f"{mode} upsert candle rows: {total}, symbols={len(symbols)}"
+        symbol_batches = _split_into_batches(symbols, batch_size)
+        total_rows = 0
+        total_batches = len(symbol_batches)
+
+        for batch_num, batch_symbols in enumerate(symbol_batches, start=1):
+            try:
+                if full_sync:
+                    batch_rows = fetch_yahoo_daily_history(
+                        symbols=batch_symbols,
+                        timeout_sec=settings.request_timeout_sec,
+                        years=history_years,
+                        retry_max=settings.yahoo_retry_max,
+                        min_delay_sec=settings.yahoo_min_delay_sec,
+                        max_delay_sec=settings.yahoo_max_delay_sec,
+                        backoff_base_sec=settings.yahoo_backoff_base_sec,
+                    )
+                else:
+                    end_at = datetime.now(timezone.utc)
+                    start_at = end_at - timedelta(days=max(settings.history_incremental_days, 1))
+                    batch_rows = fetch_yahoo_daily_history_between(
+                        symbols=batch_symbols,
+                        timeout_sec=settings.request_timeout_sec,
+                        start_at=start_at,
+                        end_at=end_at,
+                        retry_max=settings.yahoo_retry_max,
+                        min_delay_sec=settings.yahoo_min_delay_sec,
+                        max_delay_sec=settings.yahoo_max_delay_sec,
+                        backoff_base_sec=settings.yahoo_backoff_base_sec,
+                    )
+
+                batch_total = insert_price_history(conn, batch_rows)
+                total_rows += batch_total
+                logger.info(
+                    "Yahoo history batch %d/%d selesai: +%d rows, symbols=%d",
+                    batch_num,
+                    total_batches,
+                    batch_total,
+                    len(batch_symbols),
+                )
+
+                # Throttle antar batch agar provider breathing room.
+                if batch_num < total_batches:
+                    time.sleep(0.5)
+
+            except Exception as batch_exc:
+                logger.warning(
+                    "Yahoo history batch %d/%d gagal: %s (skip lanjut batch berikutnya)",
+                    batch_num,
+                    total_batches,
+                    str(batch_exc),
+                )
+
+        run.message = f"{mode} upsert candle rows: {total_rows}, symbols={len(symbols)}, batches={total_batches}"
         logger.info("Yahoo history sync selesai: %s", run.message)
     except Exception as exc:
         run.status = "FAILED"
@@ -186,6 +219,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Lewati sinkronisasi candle history",
     )
+    parser.add_argument(
+        "--history-batch-size",
+        type=int,
+        default=50,
+        help="Jumlah simbol per batch saat backfill history (default: 50, untuk menghindari rate-limit)",
+    )
     return parser.parse_args()
 
 
@@ -199,6 +238,7 @@ def main() -> None:
             full_sync=args.full_sync,
             history_years=args.history_years,
             include_history=not args.skip_history,
+            history_batch_size=args.history_batch_size,
         )
         return
 
@@ -217,10 +257,16 @@ def main() -> None:
             full_sync=args.full_sync,
             history_years=args.history_years,
             include_history=not args.skip_history,
+            history_batch_size=args.history_batch_size,
         )
         elapsed = time.time() - cycle_start
         sleep_sec = max(args.interval_min * 60 - elapsed, 1)
         time.sleep(sleep_sec)
+
+
+def _split_into_batches(items: List[str], batch_size: int) -> List[List[str]]:
+    safe_batch_size = max(batch_size, 1)
+    return [items[i : i + safe_batch_size] for i in range(0, len(items), safe_batch_size)]
 
 
 if __name__ == "__main__":
