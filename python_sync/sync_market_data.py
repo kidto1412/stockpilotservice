@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from typing import List
 
 from config import get_settings, parse_symbols
-from db import SyncRun, connect, ensure_schema, insert_technical_snapshots, log_sync_run
+from db import SyncRun, connect, ensure_schema, insert_technical_snapshots, insert_official_events, log_sync_run
 from sources.tradingview_source import fetch_tradingview_snapshots
+from sources.bisnis_source import fetch_bisnis_news
 
 
 logging.basicConfig(
@@ -25,9 +26,10 @@ def run_once(symbols: List[str], full_sync: bool = False) -> None:
 
         if full_sync:
             logger.info(
-                "--full-sync scan semua saham IDX, snapshot teknikal terbaru."
+                "--full-sync scan semua saham IDX, snapshot teknikal + news terbaru."
             )
         _run_tradingview(conn, settings, symbols)
+        _run_bisnis_news(conn, settings)
 
 
 def _run_tradingview(conn, settings, symbols: List[str]) -> None:
@@ -50,6 +52,27 @@ def _run_tradingview(conn, settings, symbols: List[str]) -> None:
         run.status = "FAILED"
         run.message = str(exc)
         logger.exception("TradingView sync gagal")
+    finally:
+        run.finished_at = datetime.now(timezone.utc)
+        log_sync_run(conn, run)
+
+
+def _run_bisnis_news(conn, settings) -> None:
+    started = datetime.now(timezone.utc)
+    run = SyncRun(source="BISNIS_COM", started_at=started, status="SUCCESS", message="OK")
+
+    try:
+        rows = fetch_bisnis_news(
+            rss_url=settings.bisnis_rss_url,
+            timeout_sec=settings.request_timeout_sec,
+        )
+        total = insert_official_events(conn, rows)
+        run.message = f"upsert news/events: {total}"
+        logger.info("Bisnis.com news sync selesai: %s", run.message)
+    except Exception as exc:
+        run.status = "FAILED"
+        run.message = str(exc)
+        logger.exception("Bisnis.com news sync gagal")
     finally:
         run.finished_at = datetime.now(timezone.utc)
         log_sync_run(conn, run)

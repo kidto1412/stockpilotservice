@@ -12,6 +12,7 @@ load_dotenv()
 class Settings:
     database_url: str
     tradingview_scanner_url: str
+    bisnis_rss_url: str
     request_timeout_sec: int
     sync_interval_min: int
     tradingview_all_page_size: int
@@ -33,6 +34,10 @@ def get_settings() -> Settings:
         tradingview_scanner_url=os.getenv(
             "TRADINGVIEW_SCANNER_URL",
             "https://scanner.tradingview.com/indonesia/scan",
+        ).strip(),
+        bisnis_rss_url=os.getenv(
+            "BISNIS_RSS_URL",
+            "https://bisnis.com/feed/rss.xml",
         ).strip(),
         request_timeout_sec=int(os.getenv("SYNC_REQUEST_TIMEOUT_SEC", "20")),
         sync_interval_min=int(os.getenv("SYNC_INTERVAL_MIN", "30")),
