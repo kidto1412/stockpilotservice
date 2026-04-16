@@ -1,5 +1,5 @@
 """
-Fetch news dari Bisnis.com RSS feed.
+Fetch news/event dari Bisnis.com HTML pages.
 Normalize ke format market_event_official dengan event_type=NEWS.
 """
 
@@ -10,8 +10,9 @@ import logging
 import re
 from datetime import datetime, timezone
 from html import unescape
-from typing import Any, Dict, List
-from xml.etree import ElementTree as ET
+from html.parser import HTMLParser
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -19,89 +20,121 @@ logger = logging.getLogger("market-sync")
 
 
 def fetch_bisnis_news(
-    rss_url: str = "https://bisnis.com/feed/rss.xml",
+    rss_url: str = "https://www.bisnis.com/",
     timeout_sec: int = 20,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch news dari Bisnis.com RSS feed.
-    Extract symbols dari title/description, normalize to DB format.
+    Fetch news dari Bisnis.com HTML.
+    Extract symbols dari title/text, normalize to DB format.
     """
-    logger.info("Fetching Bisnis.com RSS: %s", rss_url)
+    logger.info("Fetching Bisnis.com HTML: %s", rss_url)
 
-    response = requests.get(
+    pages = [
         rss_url,
-        timeout=timeout_sec,
-        headers={"User-Agent": "Mozilla/5.0 StockPilotService/1.0"},
-    )
-    response.raise_for_status()
-
-    xml_text = sanitize_xml(response.text)
-    root = ET.fromstring(xml_text)
-    items = root.findall(".//item")
-    logger.info("Bisnis RSS ditemukan %d entries", len(items))
+        "https://market.bisnis.com/",
+        "https://finansial.bisnis.com/",
+    ]
 
     rows: List[Dict[str, Any]] = []
 
-    for item in items:
+    seen_links: set[str] = set()
+    for page_url in pages:
         try:
-            title = clean_text(get_child_text(item, "title"))
-            link = clean_text(get_child_text(item, "link"))
-            published = clean_text(get_child_text(item, "pubDate") or get_child_text(item, "published"))
-            summary = clean_text(get_child_text(item, "description") or get_child_text(item, "summary"))
-
-            if not title or not link:
-                continue
-
-            symbols = extract_symbols(f"{title} {summary}")
-            event_date = parse_published_date(published)
-            dedup_key = hashlib.sha256(link.encode()).hexdigest()[:16]
-
-            symbol_values = symbols if symbols else [None]
-            for symbol in symbol_values:
-                rows.append(
-                    {
-                        "source": "BISNIS_COM",
-                        "event_type": "NEWS",
-                        "dedup_key": f"{dedup_key}_{symbol or 'GENERAL'}",
-                        "symbol": symbol,
-                        "title": title,
-                        "event_date": event_date,
-                        "reference_url": link,
-                        "external_id": link,
-                        "raw_payload": {
-                            "url": link,
-                            "published": published,
-                            "summary": summary[:1000],
-                            "source_feed": "bisnis.com",
-                            "symbols": symbols,
-                        },
-                    }
-                )
+            response = requests.get(
+                page_url,
+                timeout=timeout_sec,
+                headers={"User-Agent": "Mozilla/5.0 StockPilotService/1.0"},
+            )
+            response.raise_for_status()
         except Exception as exc:
-            logger.warning("Skip entry (error): %s", exc)
+            logger.warning("Skip Bisnis page %s: %s", page_url, exc)
             continue
+
+        parser = BisnisLinkParser(base_url=page_url)
+        parser.feed(response.text)
+        candidates = parser.candidates
+        logger.info("Bisnis page %s found %d candidate links", page_url, len(candidates))
+
+        for title, link, context_text in candidates:
+            try:
+                normalized_link = urljoin(page_url, link)
+                if normalized_link in seen_links:
+                    continue
+                seen_links.add(normalized_link)
+
+                if not is_relevant_bisnis_link(normalized_link):
+                    continue
+
+                # Skip category pages, focus on article pages.
+                if "/read/" not in normalized_link:
+                    continue
+
+                symbols = extract_symbols(f"{title} {context_text}")
+                event_date = guess_event_date_from_url(normalized_link)
+                dedup_key = hashlib.sha256(normalized_link.encode()).hexdigest()[:16]
+
+                symbol_values = symbols if symbols else [None]
+                for symbol in symbol_values:
+                    rows.append(
+                        {
+                            "source": "BISNIS_COM",
+                            "event_type": "NEWS",
+                            "dedup_key": f"{dedup_key}_{symbol or 'GENERAL'}",
+                            "symbol": symbol,
+                            "title": title,
+                            "event_date": event_date,
+                            "reference_url": normalized_link,
+                            "external_id": normalized_link,
+                            "raw_payload": {
+                                "url": normalized_link,
+                                "title": title,
+                                "context": context_text[:1000],
+                                "source_page": page_url,
+                                "symbols": symbols,
+                            },
+                        }
+                    )
+            except Exception as exc:
+                logger.warning("Skip entry (error): %s", exc)
+                continue
 
     logger.info("Bisnis RSS normalized %d news items", len(rows))
     return rows
 
 
-def sanitize_xml(xml_text: str) -> str:
-    """Bersihkan XML RSS yang kadang mengandung karakter ilegal atau & mentah."""
-    cleaned = xml_text.replace("\x00", "")
-    cleaned = re.sub(r"[\x01-\x08\x0b\x0c\x0e-\x1f]", "", cleaned)
-    cleaned = re.sub(
-        r"&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9a-fA-F]+;)",
-        "&amp;",
-        cleaned,
-    )
-    return cleaned
+class BisnisLinkParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.candidates: List[Tuple[str, str, str]] = []
+        self._current_href: str | None = None
+        self._current_text: List[str] = []
 
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        attr_map = {key.lower(): value for key, value in attrs}
+        href = attr_map.get("href")
+        if href:
+            self._current_href = href
+            self._current_text = []
 
-def get_child_text(item: ET.Element, tag_name: str) -> str:
-    child = item.find(tag_name)
-    if child is None or child.text is None:
-        return ""
-    return child.text
+    def handle_data(self, data: str) -> None:
+        if self._current_href is not None:
+            self._current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or self._current_href is None:
+            return
+        text = clean_text(" ".join(self._current_text))
+        href = self._current_href.strip()
+        self._current_href = None
+        self._current_text = []
+
+        if not text or len(text) < 12:
+            return
+
+        self.candidates.append((text, href, text))
 
 
 def clean_text(text: str) -> str:
@@ -109,6 +142,20 @@ def clean_text(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def is_relevant_bisnis_link(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    return host.endswith("bisnis.com") and "/read/" in parsed.path
+
+
+def guess_event_date_from_url(url: str) -> datetime | None:
+    match = re.search(r"/read/(\d{4})(\d{2})(\d{2})/", url)
+    if not match:
+        return None
+    year, month, day = map(int, match.groups())
+    return datetime(year, month, day, tzinfo=timezone.utc)
 
 
 def extract_symbols(text: str) -> List[str]:

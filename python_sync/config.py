@@ -37,7 +37,7 @@ def get_settings() -> Settings:
         ).strip(),
         bisnis_rss_url=os.getenv(
             "BISNIS_RSS_URL",
-            "https://bisnis.com/feed/rss.xml",
+            "https://www.bisnis.com/",
         ).strip(),
         request_timeout_sec=int(os.getenv("SYNC_REQUEST_TIMEOUT_SEC", "20")),
         sync_interval_min=int(os.getenv("SYNC_INTERVAL_MIN", "30")),
