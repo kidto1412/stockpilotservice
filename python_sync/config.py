@@ -19,6 +19,10 @@ class Settings:
     tradingview_all_max_rows: int
     history_backfill_years: int
     history_incremental_days: int
+    yahoo_retry_max: int
+    yahoo_backoff_base_sec: float
+    yahoo_min_delay_sec: float
+    yahoo_max_delay_sec: float
 
 
 def parse_symbols(raw: str) -> List[str]:
@@ -47,4 +51,8 @@ def get_settings() -> Settings:
         tradingview_all_max_rows=int(os.getenv("TRADINGVIEW_ALL_MAX_ROWS", "3000")),
         history_backfill_years=int(os.getenv("HISTORY_BACKFILL_YEARS", "10")),
         history_incremental_days=int(os.getenv("HISTORY_INCREMENTAL_DAYS", "30")),
+        yahoo_retry_max=int(os.getenv("YAHOO_RETRY_MAX", "5")),
+        yahoo_backoff_base_sec=float(os.getenv("YAHOO_BACKOFF_BASE_SEC", "1.5")),
+        yahoo_min_delay_sec=float(os.getenv("YAHOO_MIN_DELAY_SEC", "0.2")),
+        yahoo_max_delay_sec=float(os.getenv("YAHOO_MAX_DELAY_SEC", "0.8")),
     )

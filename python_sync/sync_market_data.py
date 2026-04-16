@@ -101,6 +101,10 @@ def _run_daily_history(
                 symbols=symbols,
                 timeout_sec=settings.request_timeout_sec,
                 years=history_years,
+                retry_max=settings.yahoo_retry_max,
+                min_delay_sec=settings.yahoo_min_delay_sec,
+                max_delay_sec=settings.yahoo_max_delay_sec,
+                backoff_base_sec=settings.yahoo_backoff_base_sec,
             )
             mode = f"BACKFILL_{history_years}Y"
         else:
@@ -111,6 +115,10 @@ def _run_daily_history(
                 timeout_sec=settings.request_timeout_sec,
                 start_at=start_at,
                 end_at=end_at,
+                retry_max=settings.yahoo_retry_max,
+                min_delay_sec=settings.yahoo_min_delay_sec,
+                max_delay_sec=settings.yahoo_max_delay_sec,
+                backoff_base_sec=settings.yahoo_backoff_base_sec,
             )
             mode = f"INCREMENTAL_{settings.history_incremental_days}D"
 

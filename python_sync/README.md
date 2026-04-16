@@ -68,6 +68,10 @@ Persiapan
      - TRADINGVIEW_ALL_MAX_ROWS (default: 3000)
    - HISTORY_BACKFILL_YEARS (default: 10)
    - HISTORY_INCREMENTAL_DAYS (default: 30)
+   - YAHOO_RETRY_MAX (default: 5)
+   - YAHOO_BACKOFF_BASE_SEC (default: 1.5)
+   - YAHOO_MIN_DELAY_SEC (default: 0.2)
+   - YAHOO_MAX_DELAY_SEC (default: 0.8)
 
 Jalankan Sinkron Sekali (tulisan symbols optional)
 
