@@ -132,8 +132,12 @@ def _fetch_symbol_daily_candles(
             "rtc",
         ])
         _send_tv_message(ws, "quote_add_symbols", [quote_session, tv_symbol, {"flags": ["force_permission"]}])
+        _send_tv_message(ws, "quote_fast_symbols", [quote_session, tv_symbol])
 
-        _send_tv_message(ws, "resolve_symbol", [chart_session, "symbol_1", json.dumps({"symbol": tv_symbol, "adjustment": "splits", "session": "regular"})])
+        # TradingView expects resolve payload as expression string prefixed by '='.
+        # Tanpa prefix ini, series bisa tidak pernah terisi walau koneksi sukses.
+        resolve_payload = f'={{"symbol":"{tv_symbol}","adjustment":"splits","session":"regular"}}'
+        _send_tv_message(ws, "resolve_symbol", [chart_session, "symbol_1", resolve_payload])
 
         # 1D resolution, request enough bars for N years.
         # Gunakan 390 hari/tahun untuk cover hari bursa + buffer split/holiday.
@@ -151,6 +155,8 @@ def _fetch_symbol_daily_candles(
         _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "1D", bars])
         raw = _read_ws_until_series(ws, timeout_sec=max(timeout_sec, _WS_TIMEOUT_SEC))
         candles = _parse_ws_series(raw)
+        if not candles:
+            _log_ws_no_data_reason(raw, tv_symbol)
         return candles
     finally:
         try:
@@ -317,6 +323,27 @@ def _extract_candles_from_payload(payload: Dict[str, Any]) -> List[Dict[str, Any
             )
 
     return candles
+
+
+def _log_ws_no_data_reason(raw: str, tv_symbol: str) -> None:
+    payloads = _split_framed_messages(raw)
+    message_types = [str(p.get("m", "")) for p in payloads]
+
+    # Surface useful hints from TradingView server responses.
+    hints: List[str] = []
+    for p in payloads:
+        m = str(p.get("m", ""))
+        if m in {"symbol_error", "critical_error", "error", "protocol_error"}:
+            hints.append(json.dumps(p, ensure_ascii=True)[:300])
+        if m == "quote_error":
+            hints.append(json.dumps(p, ensure_ascii=True)[:300])
+
+    logger.debug(
+        "TradingView WS no candles for %s; message_types=%s; hints=%s",
+        tv_symbol,
+        message_types[:20],
+        hints[:3],
+    )
 
 
 def _random_session(prefix: str) -> str:
