@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, Dict, List
 
 import requests
+
+
+logger = logging.getLogger("market-sync")
 
 
 def fetch_idx_corporate_actions(
@@ -101,11 +105,32 @@ def _fetch_records(
     seen_page_fingerprints = set()
 
     for page in range(1, max(max_pages, 1) + 1):
-        payload = _request_json(
-            url,
-            timeout_sec,
-            params={"page": page, "pageSize": page_size},
-        )
+        try:
+            payload = _request_json(
+                url,
+                timeout_sec,
+                params={"page": page, "pageSize": page_size},
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            # IDX kadang blok query pagination dengan 403, fallback ke mode non-paging.
+            if status == 403 and page == 1:
+                logger.warning(
+                    "IDX pagination diblokir (403) untuk %s. Fallback ke single request non-paging.",
+                    url,
+                )
+                payload = _request_json(url, timeout_sec)
+                return _extract_records(payload)
+
+            if status == 403 and all_records:
+                logger.warning(
+                    "IDX pagination berhenti di page=%s karena 403. Data page sebelumnya tetap dipakai.",
+                    page,
+                )
+                break
+
+            raise
+
         page_records = _extract_records(payload)
         if not page_records:
             break
@@ -127,14 +152,82 @@ def _fetch_records(
 def _request_json(url: str, timeout_sec: int, params: Dict[str, Any] | None = None) -> Any:
     headers = {
         "Accept": "application/json, text/plain, */*",
-        "User-Agent": "Mozilla/5.0 (compatible; StockPilotSync/1.0)",
+        "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "X-Requested-With": "XMLHttpRequest",
         "Referer": "https://www.idx.co.id/",
         "Origin": "https://www.idx.co.id",
     }
-    response = requests.get(url, headers=headers, timeout=timeout_sec, params=params)
-    response.raise_for_status()
-    return response.json()
+    with requests.Session() as session:
+        # Warm-up cookie/session agar peluang 403 lebih kecil.
+        try:
+            session.get("https://www.idx.co.id/", headers=headers, timeout=timeout_sec)
+        except requests.RequestException:
+            pass
+
+        attempts: List[Dict[str, Any]] = [{"method": "GET", "params": params, "data": None}]
+
+        if params:
+            # Fallback varian pagination karena beberapa endpoint IDX sensitif pada nama parameter.
+            attempts.extend(
+                [
+                    {
+                        "method": "GET",
+                        "params": {
+                            "pageNumber": params.get("page"),
+                            "pageSize": params.get("pageSize"),
+                        },
+                        "data": None,
+                    },
+                    {
+                        "method": "GET",
+                        "params": {
+                            "page": params.get("page"),
+                            "length": params.get("pageSize"),
+                        },
+                        "data": None,
+                    },
+                    {
+                        "method": "POST",
+                        "params": None,
+                        "data": {
+                            "page": params.get("page"),
+                            "pageSize": params.get("pageSize"),
+                        },
+                    },
+                ]
+            )
+
+        last_error: Exception | None = None
+        for attempt in attempts:
+            try:
+                if attempt["method"] == "POST":
+                    response = session.post(
+                        url,
+                        headers=headers,
+                        timeout=timeout_sec,
+                        data=attempt["data"],
+                    )
+                else:
+                    response = session.get(
+                        url,
+                        headers=headers,
+                        timeout=timeout_sec,
+                        params=attempt["params"],
+                    )
+
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise last_error
+
+        raise RuntimeError("Gagal request IDX: tidak ada response valid")
 
 
 def _extract_records(payload: Any) -> List[Dict[str, Any]]:

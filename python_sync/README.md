@@ -68,6 +68,7 @@ python python_sync/sync_market_data.py --source all --full-sync
 Catatan:
 
 - `--full-sync` efektif untuk IDX (corporate action/news) dengan mode paging endpoint.
+- Jika endpoint IDX memblokir pagination (`403 Forbidden`), script otomatis fallback ke single request (non-paging) agar sinkronisasi tetap jalan.
 - Jika `--symbols` dikosongkan, TradingView auto-scan semua saham IDX (snapshot teknikal terbaru).
 - TradingView scanner tetap memberi snapshot teknikal terbaru, bukan histori candle panjang.
 
@@ -75,14 +76,14 @@ Jalankan Berkala per 30 menit
 python python_sync/sync_market_data.py --source all --symbols BBCA,TLKM,ASII --interval-min 30
 
 Contoh Cron (setiap 15 menit)
-*/15 * * * * cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
+_/15 _ \* \* \* cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
 
 Contoh Cron Office Hour (Senin-Jumat, 09:00-17:59, tiap 15 menit)
-*/15 9-17 * * 1-5 cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
+_/15 9-17 _ \* 1-5 cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
 
 Contoh Cron Jam Market IDX (perkiraan 09:00-16:15, Senin-Jumat)
-*/15 9-15 * * 1-5 cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
-0,15 16 * * 1-5 cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
+_/15 9-15 _ _ 1-5 cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
+0,15 16 _ \* 1-5 cd /Users/user/js_development/StockPilotService && /usr/bin/python3 python_sync/sync_market_data.py --source all >> /tmp/market_sync.log 2>&1
 
 Catatan Endpoint
 

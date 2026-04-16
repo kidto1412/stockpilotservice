@@ -65,28 +65,45 @@ def _run_idx(conn, settings, full_sync: bool = False) -> None:
     run = SyncRun(source="IDX", started_at=started, status="SUCCESS", message="OK")
 
     try:
-        corp_actions = fetch_idx_corporate_actions(
-            url=settings.idx_corporate_action_url,
-            timeout_sec=settings.request_timeout_sec,
-            full_sync=full_sync,
-            max_pages=settings.idx_full_sync_max_pages,
-            page_size=settings.idx_page_size,
-        )
-        news_items = fetch_idx_news(
-            url=settings.idx_news_url,
-            timeout_sec=settings.request_timeout_sec,
-            full_sync=full_sync,
-            max_pages=settings.idx_full_sync_max_pages,
-            page_size=settings.idx_page_size,
-        )
+        corp_actions = []
+        news_items = []
+        errors = []
+
+        try:
+            corp_actions = fetch_idx_corporate_actions(
+                url=settings.idx_corporate_action_url,
+                timeout_sec=settings.request_timeout_sec,
+                full_sync=full_sync,
+                max_pages=settings.idx_full_sync_max_pages,
+                page_size=settings.idx_page_size,
+            )
+        except Exception as exc:
+            errors.append(f"corporate_action={exc}")
+            logger.warning("IDX corporate action gagal: %s", exc)
+
+        try:
+            news_items = fetch_idx_news(
+                url=settings.idx_news_url,
+                timeout_sec=settings.request_timeout_sec,
+                full_sync=full_sync,
+                max_pages=settings.idx_full_sync_max_pages,
+                page_size=settings.idx_page_size,
+            )
+        except Exception as exc:
+            errors.append(f"official_news={exc}")
+            logger.warning("IDX official news gagal: %s", exc)
 
         merged = corp_actions + news_items
+        if not merged and errors:
+            raise RuntimeError("; ".join(errors))
+
         for row in merged:
             row["event_date"] = coerce_date(row.get("event_date"))
 
         total = insert_official_events(conn, merged)
         mode = "FULL_SYNC" if full_sync else "INCREMENTAL"
-        run.message = f"{mode} upsert official events: {total}"
+        partial_note = f" | warnings: {', '.join(errors)}" if errors else ""
+        run.message = f"{mode} upsert official events: {total}{partial_note}"
         logger.info("IDX sync selesai: %s", run.message)
     except Exception as exc:
         run.status = "FAILED"
