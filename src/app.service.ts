@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, MessageEvent } from '@nestjs/common';
 import {
   AutoRecommendationRequestDto,
+  ChartIndicatorQueryDto,
   LiquiditySweepSignal,
   MlTargetSignal,
   StockAnalysisRequestDto,
@@ -59,6 +60,7 @@ export class AppService {
         recommendation: 'POST /stock-analysis/recommendation',
         recommendationAuto: 'POST /stock-analysis/recommendation/auto',
         marketData: 'GET /stock-analysis/market-data/:symbol',
+        chart: 'GET /stock-analysis/chart/:symbol',
         stream: 'GET /stock-analysis/stream/:symbol',
         tradingView: 'GET /stock-analysis/tradingview/:symbol',
         trainMl: 'POST /stock-analysis/ml/train',
@@ -390,6 +392,124 @@ export class AppService {
     };
   }
 
+  async getChartWithIndicators(symbol: string, query: ChartIndicatorQueryDto) {
+    const normalized = this.normalizeIdxSymbol(symbol);
+    const interval = query.interval ?? '5m';
+    const range = query.range ?? '5d';
+    const limit = query.limit ?? 300;
+
+    const stylePreset = this.getChartStylePreset(query.style);
+    const stochKPeriod = query.stochKPeriod ?? stylePreset.stochKPeriod;
+    const stochKSmooth = query.stochKSmooth ?? stylePreset.stochKSmooth;
+    const stochDPeriod = query.stochDPeriod ?? stylePreset.stochDPeriod;
+
+    const rsiPeriod = query.rsiPeriod ?? 14;
+    const macdFast = query.macdFast ?? 12;
+    const macdSlow = query.macdSlow ?? 26;
+    const macdSignal = query.macdSignal ?? 9;
+
+    if (macdFast >= macdSlow) {
+      throw new BadRequestException('macdFast harus lebih kecil dari macdSlow');
+    }
+
+    const emaPeriods = this.parseEmaPeriods(query.emaPeriods);
+    const candles = await this.fetchYahooCandles(normalized, interval, range);
+
+    if (!candles.length) {
+      throw new BadRequestException(`Data candle ${normalized} tidak tersedia`);
+    }
+
+    const sliced = candles.slice(-limit);
+    const closes = sliced.map((item) => item.c);
+    const highs = sliced.map((item) => item.h);
+    const lows = sliced.map((item) => item.l);
+
+    const rsiSeries = this.buildRsiSeries(closes, rsiPeriod);
+    const macdSeries = this.buildMacdSeries(
+      closes,
+      macdFast,
+      macdSlow,
+      macdSignal,
+    );
+    const stochSeries = this.buildStochasticSeries(
+      highs,
+      lows,
+      closes,
+      stochKPeriod,
+      stochKSmooth,
+      stochDPeriod,
+    );
+
+    const emaMap: Record<string, Array<number | null>> = {};
+    for (const period of emaPeriods) {
+      emaMap[String(period)] = this.buildEmaSeriesNullable(closes, period);
+    }
+
+    const lastIndex = sliced.length - 1;
+    return {
+      symbol: normalized,
+      timeframe: {
+        interval,
+        range,
+      },
+      indicatorConfig: {
+        style: query.style ?? 'swing',
+        rsiPeriod,
+        macdFast,
+        macdSlow,
+        macdSignal,
+        stochastic: {
+          kPeriod: stochKPeriod,
+          kSmooth: stochKSmooth,
+          dPeriod: stochDPeriod,
+        },
+        emaPeriods,
+      },
+      candles: sliced,
+      indicators: {
+        rsi: sliced.map((c, i) => ({
+          t: c.t,
+          value: this.roundNullable(rsiSeries[i]),
+        })),
+        macd: sliced.map((c, i) => ({
+          t: c.t,
+          macd: this.roundNullable(macdSeries.macd[i]),
+          signal: this.roundNullable(macdSeries.signal[i]),
+          histogram: this.roundNullable(macdSeries.histogram[i]),
+        })),
+        stochastic: sliced.map((c, i) => ({
+          t: c.t,
+          k: this.roundNullable(stochSeries.k[i]),
+          d: this.roundNullable(stochSeries.d[i]),
+        })),
+        ema: Object.fromEntries(
+          Object.entries(emaMap).map(([period, series]) => [
+            period,
+            sliced.map((c, i) => ({
+              t: c.t,
+              value: this.roundNullable(series[i]),
+            })),
+          ]),
+        ),
+      },
+      latest: {
+        close: this.round(sliced[lastIndex].c),
+        rsi: this.roundNullable(rsiSeries[lastIndex]),
+        macd: this.roundNullable(macdSeries.macd[lastIndex]),
+        macdSignal: this.roundNullable(macdSeries.signal[lastIndex]),
+        macdHistogram: this.roundNullable(macdSeries.histogram[lastIndex]),
+        stochK: this.roundNullable(stochSeries.k[lastIndex]),
+        stochD: this.roundNullable(stochSeries.d[lastIndex]),
+        ema: Object.fromEntries(
+          Object.entries(emaMap).map(([period, series]) => [
+            period,
+            this.roundNullable(series[lastIndex]),
+          ]),
+        ),
+      },
+    };
+  }
+
   private deriveRealtimeSignals(marketData: any) {
     const closePrice = marketData.closePrice;
     const ema20 = marketData.indicators.ema20;
@@ -453,6 +573,202 @@ export class AppService {
     if (bias === 'BULLISH') return 'DAY_TRADING';
     if (bias === 'BEARISH') return 'SCALPING';
     return 'SWING_TRADING';
+  }
+
+  private async fetchYahooCandles(
+    symbol: string,
+    interval: '1m' | '5m' | '15m' | '30m' | '60m' | '1d',
+    range: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y',
+  ) {
+    const chartUrl =
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+      `?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=true&events=div%2Csplits`;
+
+    const response = await this.fetchYahooWithFallback(chartUrl);
+    const data = await response.json();
+    const result = data?.chart?.result?.[0];
+
+    if (!result?.indicators?.quote?.[0] || !Array.isArray(result?.timestamp)) {
+      throw new BadRequestException(`Data chart ${symbol} tidak tersedia`);
+    }
+
+    const quote = result.indicators.quote[0];
+    const timestamps = result.timestamp as number[];
+    const opens = quote.open ?? [];
+    const highs = quote.high ?? [];
+    const lows = quote.low ?? [];
+    const closes = quote.close ?? [];
+    const volumes = quote.volume ?? [];
+
+    const candles: Array<{
+      t: string;
+      o: number;
+      h: number;
+      l: number;
+      c: number;
+      v: number;
+    }> = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const c = closes[i];
+      if (typeof c !== 'number') continue;
+
+      const o = typeof opens[i] === 'number' ? opens[i] : c;
+      const h = typeof highs[i] === 'number' ? highs[i] : c;
+      const l = typeof lows[i] === 'number' ? lows[i] : c;
+      const v = typeof volumes[i] === 'number' ? volumes[i] : 0;
+
+      candles.push({
+        t: new Date(timestamps[i] * 1000).toISOString(),
+        o,
+        h,
+        l,
+        c,
+        v,
+      });
+    }
+
+    return candles;
+  }
+
+  private getChartStylePreset(style?: 'daily' | 'swing' | 'scalping') {
+    if (style === 'daily') {
+      return { stochKPeriod: 14, stochKSmooth: 3, stochDPeriod: 3 };
+    }
+    if (style === 'scalping') {
+      return { stochKPeriod: 5, stochKSmooth: 3, stochDPeriod: 3 };
+    }
+    return { stochKPeriod: 10, stochKSmooth: 5, stochDPeriod: 5 };
+  }
+
+  private parseEmaPeriods(raw?: string) {
+    if (!raw?.trim()) return [20, 50];
+
+    const parsed = raw
+      .split(',')
+      .map((item) => Number(item.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 2 && n <= 400);
+
+    const unique = [...new Set(parsed)].slice(0, 5);
+    return unique.length ? unique : [20, 50];
+  }
+
+  private buildRsiSeries(values: number[], period: number) {
+    const out: Array<number | null> = Array(values.length).fill(null);
+    if (values.length <= period) return out;
+
+    let gain = 0;
+    let loss = 0;
+    for (let i = 1; i <= period; i++) {
+      const diff = values[i] - values[i - 1];
+      if (diff >= 0) gain += diff;
+      else loss += Math.abs(diff);
+    }
+
+    let avgGain = gain / period;
+    let avgLoss = loss / period;
+    out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+    for (let i = period + 1; i < values.length; i++) {
+      const diff = values[i] - values[i - 1];
+      const currentGain = diff > 0 ? diff : 0;
+      const currentLoss = diff < 0 ? Math.abs(diff) : 0;
+
+      avgGain = (avgGain * (period - 1) + currentGain) / period;
+      avgLoss = (avgLoss * (period - 1) + currentLoss) / period;
+      out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    }
+
+    return out;
+  }
+
+  private buildMacdSeries(
+    values: number[],
+    fast: number,
+    slow: number,
+    signalPeriod: number,
+  ) {
+    const emaFast = this.buildEmaSeriesNullable(values, fast);
+    const emaSlow = this.buildEmaSeriesNullable(values, slow);
+
+    const macd = values.map((_, i) => {
+      if (emaFast[i] === null || emaSlow[i] === null) return null;
+      return (emaFast[i] as number) - (emaSlow[i] as number);
+    });
+
+    const macdValues = macd.map((v) => v ?? 0);
+    const signal = this.buildEmaSeriesNullable(macdValues, signalPeriod).map(
+      (v, i) => (macd[i] === null ? null : v),
+    );
+
+    const histogram = macd.map((m, i) => {
+      if (m === null || signal[i] === null) return null;
+      return m - (signal[i] as number);
+    });
+
+    return { macd, signal, histogram };
+  }
+
+  private buildStochasticSeries(
+    highs: number[],
+    lows: number[],
+    closes: number[],
+    kPeriod: number,
+    kSmooth: number,
+    dPeriod: number,
+  ) {
+    const rawK: Array<number | null> = Array(closes.length).fill(null);
+
+    for (let i = kPeriod - 1; i < closes.length; i++) {
+      const highWindow = highs.slice(i - kPeriod + 1, i + 1);
+      const lowWindow = lows.slice(i - kPeriod + 1, i + 1);
+      const highest = Math.max(...highWindow);
+      const lowest = Math.min(...lowWindow);
+      const range = highest - lowest;
+
+      rawK[i] = range === 0 ? 50 : ((closes[i] - lowest) / range) * 100;
+    }
+
+    const k = this.simpleMovingAverage(rawK, kSmooth);
+    const d = this.simpleMovingAverage(k, dPeriod);
+    return { k, d };
+  }
+
+  private simpleMovingAverage(
+    values: Array<number | null>,
+    period: number,
+  ): Array<number | null> {
+    const out: Array<number | null> = Array(values.length).fill(null);
+    for (let i = 0; i < values.length; i++) {
+      const window = values
+        .slice(i - period + 1, i + 1)
+        .filter((v): v is number => v !== null);
+      if (window.length === period) {
+        out[i] = window.reduce((sum, item) => sum + item, 0) / period;
+      }
+    }
+    return out;
+  }
+
+  private buildEmaSeriesNullable(
+    values: number[],
+    period: number,
+  ): Array<number | null> {
+    const out: Array<number | null> = Array(values.length).fill(null);
+    if (!values.length) return out;
+
+    const k = 2 / (period + 1);
+    let ema = values[0];
+    out[0] = ema;
+    for (let i = 1; i < values.length; i++) {
+      ema = values[i] * k + ema * (1 - k);
+      out[i] = ema;
+    }
+    return out;
+  }
+
+  private roundNullable(value: number | null) {
+    if (value === null) return null;
+    return this.round(value);
   }
 
   private async fetchYahooWithFallback(url: string) {

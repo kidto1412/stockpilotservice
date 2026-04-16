@@ -3,6 +3,8 @@ import {
   ArrayMinSize,
   IsArray,
   IsEnum,
+  IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -150,4 +152,78 @@ export class TrainMlModelRequestDto {
   @Min(10)
   @Max(2000)
   epochs?: number;
+}
+
+export class ChartIndicatorQueryDto {
+  @IsOptional()
+  @IsIn(['1m', '5m', '15m', '30m', '60m', '1d'])
+  interval?: '1m' | '5m' | '15m' | '30m' | '60m' | '1d';
+
+  @IsOptional()
+  @IsIn(['1d', '5d', '1mo', '3mo', '6mo', '1y'])
+  range?: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y';
+
+  @IsOptional()
+  @IsIn(['daily', 'swing', 'scalping'])
+  style?: 'daily' | 'swing' | 'scalping';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(5)
+  @Max(1000)
+  limit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(100)
+  rsiPeriod?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(100)
+  macdFast?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(3)
+  @Max(200)
+  macdSlow?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(100)
+  macdSignal?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(50)
+  stochKPeriod?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  stochKSmooth?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  stochDPeriod?: number;
+
+  @IsOptional()
+  @IsString()
+  emaPeriods?: string;
 }

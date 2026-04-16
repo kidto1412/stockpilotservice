@@ -12,6 +12,7 @@ import { Observable } from 'rxjs';
 import { AppService } from './app.service';
 import {
   AutoRecommendationRequestDto,
+  ChartIndicatorQueryDto,
   StockAnalysisRequestDto,
   TrainMlModelRequestDto,
 } from './app.dto';
@@ -46,6 +47,15 @@ export class AppController {
   }
 
   @Public()
+  @Get('stock-analysis/chart/:symbol')
+  getChartWithIndicators(
+    @Param('symbol') symbol: string,
+    @Query() query: ChartIndicatorQueryDto,
+  ) {
+    return this.appService.getChartWithIndicators(symbol, query);
+  }
+
+  @Public()
   @Sse('stock-analysis/stream/:symbol')
   streamRealtimeRecommendation(
     @Param('symbol') symbol: string,
@@ -64,7 +74,9 @@ export class AppController {
 
     return this.appService.streamRealtimeRecommendation(symbol, {
       intervalMs: intervalMs ? Number(intervalMs) : undefined,
-      foreignFlowBillion: foreignFlowBillion ? Number(foreignFlowBillion) : undefined,
+      foreignFlowBillion: foreignFlowBillion
+        ? Number(foreignFlowBillion)
+        : undefined,
       brokerNetBuyTop3Billion: brokerNetBuyTop3Billion
         ? Number(brokerNetBuyTop3Billion)
         : undefined,
