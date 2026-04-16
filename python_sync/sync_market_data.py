@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timezone
 from typing import List
 
+import requests
+
 from config import get_settings, parse_symbols
 from db import SyncRun, coerce_date, connect, ensure_schema, insert_official_events, insert_technical_snapshots, log_sync_run
 from sources.idx_source import fetch_idx_corporate_actions, fetch_idx_news
@@ -106,9 +108,20 @@ def _run_idx(conn, settings, full_sync: bool = False) -> None:
         run.message = f"{mode} upsert official events: {total}{partial_note}"
         logger.info("IDX sync selesai: %s", run.message)
     except Exception as exc:
-        run.status = "FAILED"
-        run.message = str(exc)
-        logger.exception("IDX sync gagal")
+        is_direct_403 = isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 403
+        is_aggregated_403 = "403 Client Error" in str(exc)
+
+        if is_direct_403 or is_aggregated_403:
+            run.status = "BLOCKED"
+            run.message = (
+                "IDX endpoint diblokir (HTTP 403 / Cloudflare). "
+                "Jalankan sync IDX dari network/IP lain atau endpoint resmi alternatif."
+            )
+            logger.warning("IDX sync diblokir: %s", run.message)
+        else:
+            run.status = "FAILED"
+            run.message = str(exc)
+            logger.exception("IDX sync gagal")
     finally:
         run.finished_at = datetime.now(timezone.utc)
         log_sync_run(conn, run)

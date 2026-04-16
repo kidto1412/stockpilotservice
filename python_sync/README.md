@@ -89,6 +89,8 @@ Catatan Endpoint
 
 - TradingView scanner endpoint diprioritaskan karena berbasis request JSON/XHR, bukan parse HTML chart.
 - Endpoint IDX default bisa berubah sewaktu-waktu; jika berubah, update env URL tanpa ubah kode utama.
+- Jika server mendapat `403` dari domain IDX (Cloudflare), script akan menandai status `BLOCKED` untuk sumber IDX.
+- Workaround: jalankan sinkron IDX dari IP/network lain yang tidak diblokir, tetap simpan ke database PostgreSQL yang sama.
 
 Validasi Cepat
 
