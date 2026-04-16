@@ -6,11 +6,8 @@ import time
 from datetime import datetime, timezone
 from typing import List
 
-import requests
-
 from config import get_settings, parse_symbols
-from db import SyncRun, coerce_date, connect, ensure_schema, insert_official_events, insert_technical_snapshots, log_sync_run
-from sources.idx_source import fetch_idx_corporate_actions, fetch_idx_news
+from db import SyncRun, connect, ensure_schema, insert_technical_snapshots, log_sync_run
 from sources.tradingview_source import fetch_tradingview_snapshots
 
 
@@ -21,20 +18,16 @@ logging.basicConfig(
 logger = logging.getLogger("market-sync")
 
 
-def run_once(symbols: List[str], source: str, full_sync: bool = False) -> None:
+def run_once(symbols: List[str], full_sync: bool = False) -> None:
     settings = get_settings()
     with connect(settings.database_url) as conn:
         ensure_schema(conn)
 
-        if source in ("all", "tradingview"):
-            if full_sync:
-                logger.info(
-                    "--full-sync untuk TradingView hanya snapshot terakhir (scanner endpoint tidak memberikan histori candle)."
-                )
-            _run_tradingview(conn, settings, symbols)
-
-        if source in ("all", "idx"):
-            _run_idx(conn, settings, full_sync)
+        if full_sync:
+            logger.info(
+                "--full-sync scan semua saham IDX, snapshot teknikal terbaru."
+            )
+        _run_tradingview(conn, settings, symbols)
 
 
 def _run_tradingview(conn, settings, symbols: List[str]) -> None:
@@ -62,85 +55,14 @@ def _run_tradingview(conn, settings, symbols: List[str]) -> None:
         log_sync_run(conn, run)
 
 
-def _run_idx(conn, settings, full_sync: bool = False) -> None:
-    started = datetime.now(timezone.utc)
-    run = SyncRun(source="IDX", started_at=started, status="SUCCESS", message="OK")
-
-    try:
-        corp_actions = []
-        news_items = []
-        errors = []
-
-        try:
-            corp_actions = fetch_idx_corporate_actions(
-                url=settings.idx_corporate_action_url,
-                timeout_sec=settings.request_timeout_sec,
-                full_sync=full_sync,
-                max_pages=settings.idx_full_sync_max_pages,
-                page_size=settings.idx_page_size,
-            )
-        except Exception as exc:
-            errors.append(f"corporate_action={exc}")
-            logger.warning("IDX corporate action gagal: %s", exc)
-
-        try:
-            news_items = fetch_idx_news(
-                url=settings.idx_news_url,
-                timeout_sec=settings.request_timeout_sec,
-                full_sync=full_sync,
-                max_pages=settings.idx_full_sync_max_pages,
-                page_size=settings.idx_page_size,
-            )
-        except Exception as exc:
-            errors.append(f"official_news={exc}")
-            logger.warning("IDX official news gagal: %s", exc)
-
-        merged = corp_actions + news_items
-        if not merged and errors:
-            raise RuntimeError("; ".join(errors))
-
-        for row in merged:
-            row["event_date"] = coerce_date(row.get("event_date"))
-
-        total = insert_official_events(conn, merged)
-        mode = "FULL_SYNC" if full_sync else "INCREMENTAL"
-        partial_note = f" | warnings: {', '.join(errors)}" if errors else ""
-        run.message = f"{mode} upsert official events: {total}{partial_note}"
-        logger.info("IDX sync selesai: %s", run.message)
-    except Exception as exc:
-        is_direct_403 = isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 403
-        is_aggregated_403 = "403 Client Error" in str(exc)
-
-        if is_direct_403 or is_aggregated_403:
-            run.status = "BLOCKED"
-            run.message = (
-                "IDX endpoint diblokir (HTTP 403 / Cloudflare). "
-                "Jalankan sync IDX dari network/IP lain atau endpoint resmi alternatif."
-            )
-            logger.warning("IDX sync diblokir: %s", run.message)
-        else:
-            run.status = "FAILED"
-            run.message = str(exc)
-            logger.exception("IDX sync gagal")
-    finally:
-        run.finished_at = datetime.now(timezone.utc)
-        log_sync_run(conn, run)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sync market technical + official IDX data via endpoint API/XHR",
+        description="Sync market technical snapshot dari TradingView ke DB",
     )
     parser.add_argument(
         "--symbols",
         default="",
         help="Daftar simbol dipisah koma. Kosongkan untuk auto-scan semua saham IDX",
-    )
-    parser.add_argument(
-        "--source",
-        choices=["all", "tradingview", "idx"],
-        default="all",
-        help="Pilih sumber sinkronisasi",
     )
     parser.add_argument(
         "--interval-min",
@@ -151,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--full-sync",
         action="store_true",
-        help="Backfill awal untuk data IDX (paging endpoint resmi), lalu upsert ke DB",
+        help="Scan semua saham IDX (snapshot teknikal), upsert ke DB",
     )
     return parser.parse_args()
 
@@ -161,21 +83,20 @@ def main() -> None:
     symbols = parse_symbols(args.symbols)
 
     if args.interval_min <= 0:
-        run_once(symbols=symbols, source=args.source, full_sync=args.full_sync)
+        run_once(symbols=symbols, full_sync=args.full_sync)
         return
 
     if args.full_sync:
-        logger.warning("--full-sync dipakai bersamaan scheduler. Biasanya full sync dijalankan sekali saja.")
+        logger.warning("--full-sync hanya perlu jalankan sekali saja untuk backfill awal.")
 
     logger.info(
-        "Scheduler aktif. source=%s interval=%s menit symbols=%s",
-        args.source,
+        "Scheduler aktif. interval=%s menit symbols=%s",
         args.interval_min,
         ",".join(symbols) if symbols else "ALL_IDX",
     )
     while True:
         cycle_start = time.time()
-        run_once(symbols=symbols, source=args.source, full_sync=args.full_sync)
+        run_once(symbols=symbols, full_sync=args.full_sync)
         elapsed = time.time() - cycle_start
         sleep_sec = max(args.interval_min * 60 - elapsed, 1)
         time.sleep(sleep_sec)

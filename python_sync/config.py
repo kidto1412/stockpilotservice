@@ -12,12 +12,8 @@ load_dotenv()
 class Settings:
     database_url: str
     tradingview_scanner_url: str
-    idx_corporate_action_url: str
-    idx_news_url: str
     request_timeout_sec: int
     sync_interval_min: int
-    idx_full_sync_max_pages: int
-    idx_page_size: int
     tradingview_all_page_size: int
     tradingview_all_max_rows: int
 
@@ -38,18 +34,8 @@ def get_settings() -> Settings:
             "TRADINGVIEW_SCANNER_URL",
             "https://scanner.tradingview.com/indonesia/scan",
         ).strip(),
-        idx_corporate_action_url=os.getenv(
-            "IDX_CORPORATE_ACTION_URL",
-            "https://www.idx.co.id/primary/ListedCompany/GetCompanyAnnouncement",
-        ).strip(),
-        idx_news_url=os.getenv(
-            "IDX_NEWS_URL",
-            "https://www.idx.co.id/primary/ListedCompany/GetPressRelease",
-        ).strip(),
         request_timeout_sec=int(os.getenv("SYNC_REQUEST_TIMEOUT_SEC", "20")),
         sync_interval_min=int(os.getenv("SYNC_INTERVAL_MIN", "30")),
-        idx_full_sync_max_pages=int(os.getenv("IDX_FULL_SYNC_MAX_PAGES", "200")),
-        idx_page_size=int(os.getenv("IDX_PAGE_SIZE", "100")),
         tradingview_all_page_size=int(os.getenv("TRADINGVIEW_ALL_PAGE_SIZE", "500")),
         tradingview_all_max_rows=int(os.getenv("TRADINGVIEW_ALL_MAX_ROWS", "3000")),
     )
