@@ -171,6 +171,10 @@ def _to_db_rows(symbol: str, candles: List[Dict[str, Any]]) -> List[Dict[str, An
         close = candle.get("close")
         if close is None:
             continue
+        raw_payload = dict(candle)
+        price_at = raw_payload.get("price_at")
+        if isinstance(price_at, datetime):
+            raw_payload["price_at"] = price_at.isoformat()
         rows.append(
             {
                 "source": "TRADINGVIEW",
@@ -182,7 +186,7 @@ def _to_db_rows(symbol: str, candles: List[Dict[str, Any]]) -> List[Dict[str, An
                 "low_price": candle.get("low", close),
                 "close_price": close,
                 "volume": candle.get("volume", 0),
-                "raw_payload": candle,
+                "raw_payload": raw_payload,
             }
         )
     return rows
