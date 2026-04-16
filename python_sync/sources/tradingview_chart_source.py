@@ -102,9 +102,11 @@ def _fetch_symbol_daily_candles(
 ) -> List[Dict[str, Any]]:
     """
     Fetch chart bars untuk 1 simbol dari TradingView menggunakan public endpoint.
-    Indonesia stocks di TradingView pakai format IDX:{symbol}
+    Try berbagai format symbol untuk Indonesia stocks.
     """
-    tv_symbol = f"IDX:{symbol}"
+    # Calculate time range: from N years ago to now
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    from_ts = now_ts - (years * 365 * 24 * 3600)
 
     headers = {
         "Accept": "application/json",
@@ -112,65 +114,110 @@ def _fetch_symbol_daily_candles(
         "Referer": "https://www.tradingview.com/",
     }
 
-    # Calculate time range: from N years ago to now
-    now_ts = int(datetime.now(timezone.utc).timestamp())
-    from_ts = now_ts - (years * 365 * 24 * 3600)
+    # Try berbagai format symbol untuk Indonesia
+    symbol_formats = [
+        f"IDX:{symbol}",           # Format 1: IDX:BBCA
+        f"{symbol}.JK",            # Format 2: BBCA.JK
+        symbol,                     # Format 3: BBCA (raw)
+    ]
 
-    # Try multiple endpoints untuk fetch chart data
-    # Endpoint 1: Direct chart API (preferred)
-    try:
-        url = "https://charts-node.tradingview.com/chart.t"
-        params = {
-            "symbol": tv_symbol,
-            "resolution": "D",
-            "from": from_ts,
-            "to": now_ts,
-        }
-        response = requests.get(url, params=params, headers=headers, timeout=timeout_sec)
-        if response.status_code == 200:
-            data = response.json()
-            candles = _parse_chart_response(data)
-            if candles:
-                return candles
-    except Exception as e:
-        logger.debug("TradingView direct API failed (%s): %s", tv_symbol, str(e)[:50])
+    # Try multiple endpoints
+    endpoints = [
+        {
+            "name": "chart.t (direct)",
+            "url": "https://charts-node.tradingview.com/chart.t",
+            "method": "GET",
+            "parser": _parse_chart_response,
+        },
+        {
+            "name": "scanner snapshot",
+            "url": "https://scanner.tradingview.com/chart/snapshot",
+            "method": "POST",
+            "parser": _parse_scanner_response,
+        },
+        {
+            "name": "fe endpoint",
+            "url": "https://tradingview.com/symbols/",
+            "method": "GET",
+            "parser": _parse_html_chart,
+        },
+    ]
 
-    # Endpoint 2: Scanner endpoint as fallback
-    try:
-        url = "https://scanner.tradingview.com/chart/snapshot"
-        payload = {
-            "symbols": [tv_symbol],
-            "fields": ["name", "close", "open", "high", "low", "volume", "Datetime"],
-        }
-        response = requests.post(url, json=payload, headers=headers, timeout=timeout_sec)
-        if response.status_code == 200:
-            data = response.json()
-            candles = _parse_scanner_response(data)
-            if candles:
-                return candles
-    except Exception as e:
-        logger.debug("TradingView scanner API failed (%s): %s", tv_symbol, str(e)[:50])
+    for symbol_format in symbol_formats:
+        for endpoint in endpoints:
+            try:
+                if endpoint["method"] == "GET":
+                    params = {
+                        "symbol": symbol_format,
+                        "resolution": "D",
+                        "from": from_ts,
+                        "to": now_ts,
+                    }
+                    response = requests.get(
+                        endpoint["url"],
+                        params=params,
+                        headers=headers,
+                        timeout=timeout_sec,
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        logger.debug(
+                            "TradingView %s response keys: %s",
+                            endpoint["name"],
+                            list(data.keys() if isinstance(data, dict) else []),
+                        )
+                        candles = endpoint["parser"](data)
+                        if candles:
+                            logger.debug(
+                                "TradingView %s SUCCESS with format %s: %d candles",
+                                endpoint["name"],
+                                symbol_format,
+                                len(candles),
+                            )
+                            return candles
+                else:
+                    # POST endpoint
+                    payload = {
+                        "symbols": [symbol_format],
+                        "fields": ["name", "close", "open", "high", "low", "volume", "Datetime"],
+                    }
+                    response = requests.post(
+                        endpoint["url"],
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout_sec,
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        logger.debug(
+                            "TradingView %s response keys: %s",
+                            endpoint["name"],
+                            list(data.keys() if isinstance(data, dict) else []),
+                        )
+                        candles = endpoint["parser"](data)
+                        if candles:
+                            logger.debug(
+                                "TradingView %s SUCCESS with format %s: %d candles",
+                                endpoint["name"],
+                                symbol_format,
+                                len(candles),
+                            )
+                            return candles
+            except Exception as e:
+                logger.debug(
+                    "TradingView %s with format %s failed: %s",
+                    endpoint["name"],
+                    symbol_format,
+                    str(e)[:80],
+                )
+                continue
 
-    # Endpoint 3: India/Asia historical data endpoint (last resort)
-    try:
-        # Some TradingView mirrors or alternatives
-        url = f"https://api.taapi.io/historicaldata"
-        params = {
-            "symbol": f"{symbol}",
-            "exchange": "IDX",
-            "interval": "1d",
-            "backtrack": years * 365,
-        }
-        response = requests.get(url, params=params, headers=headers, timeout=timeout_sec)
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list) and len(data) > 0:
-                candles = _convert_taapi_to_candles(data)
-                if candles:
-                    return candles
-    except Exception as e:
-        logger.debug("Alternative API failed (%s): %s", symbol, str(e)[:50])
-
+    # No data dari semua endpoint
+    logger.debug(
+        "TradingView: all endpoints failed for symbol=%s (tried formats: %s)",
+        symbol,
+        ", ".join(symbol_formats),
+    )
     return []
 
 
@@ -192,6 +239,14 @@ def _convert_taapi_to_candles(data: List[Dict[str, Any]]) -> List[Dict[str, Any]
         except Exception:
             continue
     return candles
+
+
+def _parse_html_chart(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Parse HTML/web response (not typically used here, but available).
+    """
+    # For now, just return empty - this is HTML fallback
+    return []
 
 
 def _fetch_via_direct_api(
