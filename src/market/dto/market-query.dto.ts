@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -98,4 +99,22 @@ export class RecommendationListQueryDto {
   @Min(1)
   @Max(200)
   limit = 30;
+
+  @IsOptional()
+  @IsIn(['14,3,3', '10,5,5', '5,3,3'])
+  stochSetting?: '14,3,3' | '10,5,5' | '5,3,3';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  stochBuyThreshold?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  minVolumeRatio?: number;
 }

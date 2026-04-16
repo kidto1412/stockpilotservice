@@ -183,7 +183,10 @@ export class MarketService {
     const normalizedSource = (query.source ?? 'TRADINGVIEW').toUpperCase();
     const style = query.style ?? 'SWING';
     const mode = query.mode ?? 'COMBINED';
-    const styleConfig = this.getStyleConfig(style);
+    const styleConfig = this.getStyleConfig(style, query.stochSetting);
+    const stochBuyThreshold =
+      query.stochBuyThreshold ?? styleConfig.stochBuyThreshold;
+    const minVolumeRatio = query.minVolumeRatio ?? styleConfig.minVolumeRatio;
 
     const rows = await this.prisma.$queryRaw<
       RecommendationBaseRow[]
@@ -237,7 +240,13 @@ export class MarketService {
     `);
 
     const picked = rows
-      .map((row) => this.buildRecommendation(row, style, mode, styleConfig))
+      .map((row) =>
+        this.buildRecommendation(row, style, mode, {
+          stochasticSetting: styleConfig.stochasticSetting,
+          stochBuyThreshold,
+          minVolumeRatio,
+        }),
+      )
       .filter((item) => item.isMatch)
       .sort((a, b) => b.score - a.score)
       .slice(0, query.limit);
@@ -248,6 +257,8 @@ export class MarketService {
         style,
         mode,
         stochasticSetting: styleConfig.stochasticSetting,
+        stochBuyThreshold,
+        minVolumeRatio,
       },
       count: picked.length,
       items: picked.map((item) => item.payload),
@@ -324,10 +335,10 @@ export class MarketService {
       minVolumeRatio: number;
     },
   ) {
-    const stochK = this.getStochValue(row.raw_payload, 10);
-    const stochD = this.getStochValue(row.raw_payload, 11);
-    const prevStochK = this.getStochValue(row.prev_raw_payload, 10);
-    const prevStochD = this.getStochValue(row.prev_raw_payload, 11);
+    const stochK = this.getStochValue(row.raw_payload, 8);
+    const stochD = this.getStochValue(row.raw_payload, 9);
+    const prevStochK = this.getStochValue(row.prev_raw_payload, 8);
+    const prevStochD = this.getStochValue(row.prev_raw_payload, 9);
 
     const macdGoldenCross =
       row.macd !== null &&
@@ -404,7 +415,34 @@ export class MarketService {
     };
   }
 
-  private getStyleConfig(style: RecommendationStyle) {
+  private getStyleConfig(
+    style: RecommendationStyle,
+    stochSettingOverride?: '14,3,3' | '10,5,5' | '5,3,3',
+  ) {
+    if (stochSettingOverride === '14,3,3') {
+      return {
+        stochasticSetting: '14,3,3',
+        stochBuyThreshold: 75,
+        minVolumeRatio: 0.9,
+      };
+    }
+
+    if (stochSettingOverride === '5,3,3') {
+      return {
+        stochasticSetting: '5,3,3',
+        stochBuyThreshold: 90,
+        minVolumeRatio: 1.2,
+      };
+    }
+
+    if (stochSettingOverride === '10,5,5') {
+      return {
+        stochasticSetting: '10,5,5',
+        stochBuyThreshold: 80,
+        minVolumeRatio: 1,
+      };
+    }
+
     if (style === 'DAILY') {
       return {
         stochasticSetting: '14,3,3',
