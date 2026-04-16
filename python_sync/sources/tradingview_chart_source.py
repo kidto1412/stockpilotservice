@@ -17,8 +17,7 @@ logger = logging.getLogger("market-sync")
 
 _WS_URL = "wss://data.tradingview.com/socket.io/websocket"
 _WS_TIMEOUT_SEC = 20
-_RE_TV_MESSAGE = re.compile(r"~m~\d+~m~")
-_RE_SERIES_JSON = re.compile(r'\"s\":\[(.+?)\]\}\]')
+_RE_FRAME = re.compile(r"~m~(\d+)~m~")
 
 
 def fetch_tradingview_daily_candles(
@@ -139,8 +138,17 @@ def _fetch_symbol_daily_candles(
         # 1D resolution, request enough bars for N years.
         # Gunakan 390 hari/tahun untuk cover hari bursa + buffer split/holiday.
         bars = max(400, years * 390)
-        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "1D", bars])
+        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "D", bars])
+        _send_tv_message(ws, "switch_timezone", [chart_session, "Etc/UTC"])
 
+        raw = _read_ws_until_series(ws, timeout_sec=max(timeout_sec, _WS_TIMEOUT_SEC))
+        candles = _parse_ws_series(raw)
+        if candles:
+            return candles
+
+        # Fallback beberapa market butuh format resolusi "1D"
+        _send_tv_message(ws, "remove_series", [chart_session, "s1"])
+        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "1D", bars])
         raw = _read_ws_until_series(ws, timeout_sec=max(timeout_sec, _WS_TIMEOUT_SEC))
         candles = _parse_ws_series(raw)
         return candles
@@ -193,40 +201,105 @@ def _read_ws_until_series(ws: websocket.WebSocket, timeout_sec: int) -> str:
         chunks.append(data)
         merged = "\n".join(chunks)
 
-        # Ketika series ter-load, message biasanya mengandung pattern "s":[...]
-        if "timescale_update" in merged and '"s":[' in merged:
-            return merged
-        if "series_completed" in merged and '"s":[' in merged:
-            return merged
+        # Stop lebih cepat kalau data bars sudah diterima.
+        for payload in _split_framed_messages(merged):
+            if payload.get("m") == "timescale_update":
+                candles = _extract_candles_from_payload(payload)
+                if candles:
+                    return merged
+            if payload.get("m") == "series_completed":
+                return merged
 
     return "\n".join(chunks)
 
 
 def _parse_ws_series(raw: str) -> List[Dict[str, Any]]:
-    candles: List[Dict[str, Any]] = []
     if not raw:
-        return candles
+        return []
 
-    text = _RE_TV_MESSAGE.sub("", raw)
-    match = _RE_SERIES_JSON.search(text)
-    if not match:
-        return candles
+    candles: List[Dict[str, Any]] = []
+    payloads = _split_framed_messages(raw)
+    for payload in payloads:
+        if payload.get("m") != "timescale_update":
+            continue
+        extracted = _extract_candles_from_payload(payload)
+        if extracted:
+            candles = extracted
 
-    series_blob = match.group(1)
+    if not candles:
+        message_types = [str(p.get("m", "")) for p in payloads[:8]]
+        logger.debug("TradingView WS no candles. message_types=%s", message_types)
 
-    # Format item umumnya: {"i":0,"v":[ts,open,high,low,close,volume]}
-    for item in re.finditer(r"\{\"i\":\d+,\"v\":\[(.*?)\]\}", series_blob):
-        values = item.group(1).split(",")
-        if len(values) < 5:
+    return candles
+
+
+def _split_framed_messages(raw: str) -> List[Dict[str, Any]]:
+    payloads: List[Dict[str, Any]] = []
+    idx = 0
+    n = len(raw)
+
+    while idx < n:
+        match = _RE_FRAME.search(raw, idx)
+        if not match:
+            break
+
+        length = int(match.group(1))
+        start = match.end()
+        end = start + length
+        if end > n:
+            break
+
+        chunk = raw[start:end]
+        idx = end
+
+        if not chunk or chunk.startswith("~h~"):
             continue
 
         try:
-            ts = int(float(values[0]))
-            open_price = float(values[1])
-            high_price = float(values[2])
-            low_price = float(values[3])
-            close_price = float(values[4])
-            volume = float(values[5]) if len(values) > 5 else 0.0
+            obj = json.loads(chunk)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(obj, dict):
+            payloads.append(obj)
+
+    return payloads
+
+
+def _extract_candles_from_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    candles: List[Dict[str, Any]] = []
+    params = payload.get("p")
+    if not isinstance(params, list) or len(params) < 2:
+        return candles
+
+    series_container = params[1]
+    if not isinstance(series_container, dict):
+        return candles
+
+    # Biasanya key series adalah s1, tapi bisa berubah.
+    for value in series_container.values():
+        if not isinstance(value, dict):
+            continue
+        series = value.get("s")
+        if not isinstance(series, list):
+            continue
+
+        for bar in series:
+            if not isinstance(bar, dict):
+                continue
+            data = bar.get("v")
+            if not isinstance(data, list) or len(data) < 5:
+                continue
+
+            try:
+                ts = int(float(data[0]))
+                open_price = float(data[1])
+                high_price = float(data[2])
+                low_price = float(data[3])
+                close_price = float(data[4])
+                volume = float(data[5]) if len(data) > 5 else 0.0
+            except (ValueError, TypeError):
+                continue
 
             if close_price <= 0:
                 continue
@@ -242,8 +315,6 @@ def _parse_ws_series(raw: str) -> List[Dict[str, Any]]:
                     "volume": int(volume),
                 }
             )
-        except (ValueError, TypeError):
-            continue
 
     return candles
 
