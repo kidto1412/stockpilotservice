@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List
 
 from config import get_settings, parse_symbols
@@ -90,7 +90,7 @@ def _run_daily_chart(
     history_years: int = 10,
     batch_size: int = 50,
 ) -> None:
-    """Fetch chart data dari TradingView (primary) atau Yahoo (fallback)."""
+    """Fetch chart data dari TradingView (primary only)."""
     started = datetime.now(timezone.utc)
     run = SyncRun(source="CHART_HISTORY", started_at=started, status="SUCCESS", message="OK")
 
@@ -103,7 +103,7 @@ def _run_daily_chart(
 
         for batch_num, batch_symbols in enumerate(symbol_batches, start=1):
             try:
-                # Priority 1: TradingView chart (stable, no rate-limit)
+                # TradingView chart via WebSocket session (same path as chart web)
                 logger.info(
                     "Chart batch %d/%d: trying TradingView source (primary)...",
                     batch_num,
