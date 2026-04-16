@@ -14,464 +14,54 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-//
-// ========== ENUMS ==========
-//
+model MarketTechnicalSnapshot {
+  id         BigInt   @id @default(autoincrement()) @db.BigInt
+  source     String
+  symbol     String
+  snapshotAt DateTime @map("snapshot_at") @db.Timestamptz(6)
+  closePrice Float?   @map("close_price")
+  volume     BigInt?  @db.BigInt
+  rsi        Float?
+  macd       Float?
+  macdSignal Float?   @map("macd_signal")
+  ema20      Float?
+  ema50      Float?
+  rawPayload Json     @map("raw_payload")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-enum UserRole {
-  OWNER
-  ADMIN
-  CASHIER
+  @@unique([source, symbol, snapshotAt], map: "market_technical_snapshot_source_symbol_snapshot_at_key")
+  @@index([symbol, snapshotAt], map: "market_technical_snapshot_symbol_snapshot_at_idx")
+  @@map("market_technical_snapshot")
 }
 
-enum SyncType {
-  PUSH
-  PULL
+model MarketEventOfficial {
+  id           BigInt    @id @default(autoincrement()) @db.BigInt
+  source       String
+  eventType    String    @map("event_type")
+  dedupKey     String    @map("dedup_key")
+  symbol       String?
+  title        String
+  eventDate    DateTime? @map("event_date") @db.Date
+  referenceUrl String?   @map("reference_url")
+  externalId   String?   @map("external_id")
+  rawPayload   Json      @map("raw_payload")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([source, eventType, dedupKey], map: "market_event_official_source_event_type_dedup_key_key")
+  @@index([eventType, eventDate], map: "market_event_official_event_type_event_date_idx")
+  @@index([symbol], map: "market_event_official_symbol_idx")
+  @@map("market_event_official")
 }
 
-enum StockMovementType {
-  IN
-  OUT
-  ADJUSTMENT
-  RETURN
-}
-
-enum PaymentMethod {
-  CASH
-  TRANSFER
-  QRIS
-  DEBIT
-  CREDIT
-  OTHER
-}
-
-enum TransactionStatus {
-  DRAFT
-  COMPLETED
-  CANCELED
-}
-
-enum ShiftStatus {
-  OPEN
-  CLOSED
-}
-
-//
-// ========== MODELS ==========
-//
-
-model User {
-  id        String   @id @default(uuid())
-  fullName  String
-  username  String   @unique
-  password  String
-  email     String?  @unique
-  phone     String?
-  role      UserRole @default(OWNER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  store        Store?
-  // branch       Branch?       @relation(fields: [branchId], references: [id])
-  branchId     String?
-  transactions Transaction[]
-  shifts       Shift[]
-}
-
-model Staff {
-  id           String        @id @default(uuid())
-  email        String        @unique
-  fullName     String
-  username     String        @unique
-  password     String
-  role         UserRole      @default(CASHIER)
-  storeId      String
-  store        Store         @relation(fields: [storeId], references: [id])
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  phone        String
-  shifts       Shift[]
-  transactions Transaction[]
-}
-
-model Store {
-  id       String @id @default(uuid())
-  code     String @unique
-  name     String
-  ownerId  String @unique // <--- Tambahkan @unique disini
-  province String
-  regency  String
-  owner    User   @relation(fields: [ownerId], references: [id])
-
-  staffs         Staff[]
-  // branches       Branch[]
-  businessType   BusinessType? @relation(fields: [businessTypeId], references: [id])
-  businessTypeId String?
-  categories     Category[]
-  products       Product[]
-  transactions   Transaction[]
-  customers      Customer[]
-  shifts         Shift[]
-  address        String
-  logoUrl        String?
-
-  createdAt      DateTime        @default(now()) // <-- Tambahkan ini
-  updatedAt      DateTime        @updatedAt // <-- Tambahkan ini
-  discounts      Discount[]
-  suppliers      Supplier[]
-  purchases      Purchase[]
-  receivables    Receivable[]
-  payables       Payable[]
-  stockMovements StockMovement[]
-}
-
-model ProductPointRule {
-  id        String   @id @default(uuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id])
-  points    Int // jumlah poin yang diberikan per 1 item
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  histories CustomerPointHistory[]
-}
-
-model CustomerPointHistory {
-  id                 String            @id @default(uuid())
-  customerId         String
-  customer           Customer          @relation(fields: [customerId], references: [id])
-  transactionId      String?
-  transaction        Transaction?      @relation(fields: [transactionId], references: [id])
-  productId          String?
-  product            Product?          @relation(fields: [productId], references: [id])
-  points             Int
-  createdAt          DateTime          @default(now())
-  productPointRule   ProductPointRule? @relation(fields: [productPointRuleId], references: [id])
-  productPointRuleId String?
-}
-
-// model Branch {
-//   id        String   @id @default(uuid())
-//   name      String
-//   address   String?
-//   storeId   String
-//   store     Store    @relation(fields: [storeId], references: [id])
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   users User[] // karyawan yang ditempatkan di cabang ini
-// }
-
-model BusinessType {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  // description String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  stores Store[] // Relasi ke store
-}
-
-model Category {
-  id        String   @id @default(uuid())
-  name      String
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  products Product[]
-}
-
-model Product {
-  id         String    @id @default(uuid())
-  name       String
-  sku        String?   @unique
-  barcode    String?   @unique
-  unit       String?
-  unitValue  Float?
-  cost       Float
-  price      Float
-  stock      Int       @default(0)
-  imageUrl   String?
-  isActive   Boolean   @default(true)
-  categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id])
-  storeId    String
-  store      Store     @relation(fields: [storeId], references: [id])
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  transactionItems TransactionItem[]
-  stockMovements   StockMovement[]
-
-  productPointRules      ProductPointRule[]
-  customerPointHistories CustomerPointHistory[]
-  productDiscounts       ProductDiscount[]
-  purchaseItems          PurchaseItem[]
-}
-
-enum DiscountType {
-  PRODUCT
-  TRANSACTION
-  QUANTITY
-}
-
-enum DiscountValueType {
-  PERCENT // contoh 10%
-  AMOUNT // contoh 5000
-}
-
-model Discount {
-  id          String            @id @default(uuid())
-  name        String
-  description String?
-  storeId     String
-  store       Store             @relation(fields: [storeId], references: [id])
-  valueType   DiscountValueType // PERCENT | AMOUNT
-  value       Float // 10 berarti 10% atau 10.000 tergantung tipe
-  // minQty      Int? // hanya untuk QUANTITY
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-
-  productRelations ProductDiscount[] // relasi ke produk
-  transactionItems TransactionItem[] // relasi ketika dipakai di transaksi
-  transactions     Transaction[]
-}
-
-model ProductDiscount {
-  id         String   @id @default(uuid())
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id])
-  discountId String
-  discount   Discount @relation(fields: [discountId], references: [id])
-}
-
-model Transaction {
-  id            String            @id @default(uuid())
-  invoiceNumber String            @unique
-  storeId       String
-  store         Store             @relation(fields: [storeId], references: [id])
-  cashierId     String
-  cashier       User              @relation(fields: [cashierId], references: [id])
-  customerId    String?
-  customer      Customer?         @relation(fields: [customerId], references: [id])
-  paymentMethod PaymentMethod
-  totalAmount   Float
-  discount      Float?            @default(0)
-  tax           Float?            @default(0)
-  grandTotal    Float
-  paidAmount    Float             @default(0)
-  changeAmount  Float             @default(0)
-  status        TransactionStatus @default(COMPLETED)
-  isSynced      Boolean           @default(false)
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-
-  transactionItems       TransactionItem[]
-  staff                  Staff?                 @relation(fields: [staffId], references: [id])
-  staffId                String?
-  customerPointHistories CustomerPointHistory[]
-  transactionDiscountId  String?
-  transactionDiscount    Discount?              @relation(fields: [transactionDiscountId], references: [id])
-  receivable             Receivable?
-}
-
-model TransactionItem {
-  id            String      @id @default(uuid())
-  transactionId String
-  transaction   Transaction @relation(fields: [transactionId], references: [id])
-  productId     String
-  product       Product     @relation(fields: [productId], references: [id])
-  quantity      Int
-  price         Float
-  subtotal      Float
-  discountId    String?
-  discount      Discount?   @relation(fields: [discountId], references: [id])
-}
-
-model Supplier {
-  id      String  @id @default(uuid())
-  name    String
-  phone   String?
-  email   String?
-  address String?
-  storeId String
-  store   Store   @relation(fields: [storeId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  stockMovements StockMovement[]
-  purchases      Purchase[]
-  payables       Payable[]
-}
-
-model Purchase {
-  id      String @id @default(uuid())
-  storeId String
-  store   Store  @relation(fields: [storeId], references: [id])
-
-  supplierId String
-  supllier   Supplier @relation(fields: [supplierId], references: [id])
-
-  invoiceNumber String?
-  totalAmount   Float
-  note          String?
-
-  createdAt DateTime @default(now())
-
-  items   PurchaseItem[]
-  payable Payable?
-}
-
-model PurchaseItem {
-  id         String   @id @default(uuid())
-  purchaseId String
-  purchase   Purchase @relation(fields: [purchaseId], references: [id])
-
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-
-  quantity Int
-  cost     Float
-}
-
-model StockMovement {
-  id        String @id @default(uuid())
-  productId String
-  storeId   String
-  store     Store  @relation(fields: [storeId], references: [id])
-
-  quantity    Int
-  type        StockMovementType // IN / OUT
-  source      String? // PURCHASE / SALE / ADJUSTMENT
-  referenceId String? // purchaseId / transactionId
-  product     Product           @relation(fields: [productId], references: [id])
-  supplier    Supplier?         @relation(fields: [supplierId], references: [id])
-  supplierId  String?
-  note        String?
-  createdAt   DateTime          @default(now())
-}
-
-model Customer {
-  id        String   @id @default(uuid())
-  name      String
-  phone     String?
-  email     String?
-  address   String?
-  points    Int      @default(0)
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  transactions           Transaction[]
-  customerPointHistories CustomerPointHistory[]
-  receivables            Receivable[]
-}
-
-model Shift {
-  id             String      @id @default(uuid())
-  cashierId      String
-  cashier        User        @relation(fields: [cashierId], references: [id])
-  storeId        String
-  store          Store       @relation(fields: [storeId], references: [id])
-  openedAt       DateTime    @default(now())
-  closedAt       DateTime?
-  status         ShiftStatus @default(OPEN)
-  openingBalance Float       @default(0)
-  closingBalance Float?
-  staff          Staff?      @relation(fields: [staffId], references: [id])
-  staffId        String?
-}
-
-model SyncLog {
-  id        String   @id @default(uuid())
-  type      SyncType
-  tableName String
-  recordId  String?
-  success   Boolean  @default(true)
-  message   String?
-  syncedAt  DateTime @default(now())
-}
-
-model ReceivablePayment {
-  id           String     @id @default(uuid())
-  receivableId String
-  receivable   Receivable @relation(fields: [receivableId], references: [id])
-
-  amount        Float
-  paymentMethod PaymentMethod
-  note          String?
-  paidAt        DateTime      @default(now())
-}
-
-model Receivable {
-  id      String @id @default(uuid())
-  storeId String
-  store   Store  @relation(fields: [storeId], references: [id])
-
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-
-  transactionId String      @unique
-  transaction   Transaction @relation(fields: [transactionId], references: [id])
-
-  totalAmount Float
-  paidAmount  Float            @default(0)
-  remaining   Float
-  dueDate     DateTime?
-  status      ReceivableStatus @default(UNPAID)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  payments ReceivablePayment[]
-}
-
-enum ReceivableStatus {
-  UNPAID
-  PARTIAL
-  PAID
-}
-
-model Payable {
-  id      String @id @default(uuid())
-  storeId String
-  store   Store  @relation(fields: [storeId], references: [id])
-
-  supplierId String
-  supplier   Supplier @relation(fields: [supplierId], references: [id])
-
-  purchaseId String   @unique
-  purchase   Purchase @relation(fields: [purchaseId], references: [id])
-
-  totalAmount Float
-  paidAmount  Float         @default(0)
-  remaining   Float
-  dueDate     DateTime?
-  status      PayableStatus @default(UNPAID)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  payments PayablePayment[]
-}
-
-enum PayableStatus {
-  UNPAID
-  PARTIAL
-  PAID
-}
-
-model PayablePayment {
-  id        String  @id @default(uuid())
-  payableId String
-  payable   Payable @relation(fields: [payableId], references: [id])
-
-  amount        Float
-  paymentMethod PaymentMethod
-  note          String?
-  paidAt        DateTime      @default(now())
+model MarketSyncRunLog {
+  id         BigInt    @id @default(autoincrement()) @db.BigInt
+  source     String
+  startedAt  DateTime  @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+  status     String
+  message    String
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([source, createdAt], map: "sync_run_log_source_created_at_idx")
+  @@map("sync_run_log")
 }

@@ -31,6 +31,7 @@ import { ReportTransactionModule } from './report-transaction/report-transaction
 import { TransactionModule } from './transaction/transaction.module';
 import { StockMovementModule } from './stock-movement/stock-movement.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { MarketModule } from './market/market.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     StockMovementModule,
     DashboardModule,
     ReportTransactionModule,
+    MarketModule,
   ],
   controllers: [AppController],
   providers: [

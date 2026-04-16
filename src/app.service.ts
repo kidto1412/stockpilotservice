@@ -115,7 +115,9 @@ export class AppService {
     }
 
     const livePrice =
-      quoteData?.regularMarketPrice ?? quoteData?.postMarketPrice ?? quoteData?.preMarketPrice;
+      quoteData?.regularMarketPrice ??
+      quoteData?.postMarketPrice ??
+      quoteData?.preMarketPrice;
     const closes = chartData.closes.slice();
     const opens = chartData.opens.slice();
     const highs = chartData.highs.slice();
@@ -125,8 +127,12 @@ export class AppService {
     if (typeof livePrice === 'number' && livePrice > 0) {
       closes.push(livePrice);
       opens.push(opens.length ? opens[opens.length - 1] : livePrice);
-      highs.push(highs.length ? Math.max(highs[highs.length - 1], livePrice) : livePrice);
-      lows.push(lows.length ? Math.min(lows[lows.length - 1], livePrice) : livePrice);
+      highs.push(
+        highs.length ? Math.max(highs[highs.length - 1], livePrice) : livePrice,
+      );
+      lows.push(
+        lows.length ? Math.min(lows[lows.length - 1], livePrice) : livePrice,
+      );
       volumes.push(volumes.length ? volumes[volumes.length - 1] : 0);
     }
 
@@ -334,7 +340,9 @@ export class AppService {
       volumes,
       lastTimestamp:
         result?.meta?.regularMarketTime ??
-        (Array.isArray(result?.timestamp) ? result.timestamp[result.timestamp.length - 1] : null),
+        (Array.isArray(result?.timestamp)
+          ? result.timestamp[result.timestamp.length - 1]
+          : null),
     };
   }
 
@@ -376,7 +384,8 @@ export class AppService {
       recommendation: {
         ...recommendation,
         preferredStyle:
-          options?.strategyStyle ?? this.pickPreferredStyle(recommendation.marketBias),
+          options?.strategyStyle ??
+          this.pickPreferredStyle(recommendation.marketBias),
       },
     };
   }
@@ -393,9 +402,13 @@ export class AppService {
     const previousLow = marketData.candles?.previousLow ?? closePrice;
 
     const bullishSweep =
-      currentLow < previousLow && closePrice > previousLow && closePrice > ema20;
+      currentLow < previousLow &&
+      closePrice > previousLow &&
+      closePrice > ema20;
     const bearishSweep =
-      currentHigh > previousHigh && closePrice < previousHigh && closePrice < ema20;
+      currentHigh > previousHigh &&
+      closePrice < previousHigh &&
+      closePrice < ema20;
 
     const liquiditySweep: LiquiditySweepSignal = bullishSweep
       ? LiquiditySweepSignal.BULLISH
@@ -404,7 +417,11 @@ export class AppService {
         : LiquiditySweepSignal.NONE;
 
     const trendBias =
-      closePrice > ema20 && ema20 > ema50 ? 1 : closePrice < ema20 && ema20 < ema50 ? -1 : 0;
+      closePrice > ema20 && ema20 > ema50
+        ? 1
+        : closePrice < ema20 && ema20 < ema50
+          ? -1
+          : 0;
     const momentumBias = rsi > 60 ? 0.3 : rsi < 40 ? -0.3 : 0;
     const volumeBias = volumeRatio > 1.2 ? 0.2 : volumeRatio < 0.8 ? -0.2 : 0;
     const sweepBias =
@@ -532,7 +549,9 @@ export class AppService {
                 type: 'error',
                 symbol: this.normalizeIdxSymbol(symbol),
                 message:
-                  error instanceof Error ? error.message : 'Realtime stream gagal',
+                  error instanceof Error
+                    ? error.message
+                    : 'Realtime stream gagal',
               },
             }),
           ),
