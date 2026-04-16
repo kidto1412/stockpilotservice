@@ -9,6 +9,9 @@ import {
   Min,
 } from 'class-validator';
 
+export type RecommendationStyle = 'DAILY' | 'SWING' | 'SCALPING';
+export type RecommendationMode = 'COMBINED' | 'MACD_STOCH' | 'LIQUIDITY_SWEEP';
+
 export class TechnicalQueryDto {
   @IsOptional()
   @IsString()
@@ -74,4 +77,25 @@ export class SyncStatusQueryDto {
   @Min(1)
   @Max(200)
   limit = 50;
+}
+
+export class RecommendationListQueryDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsIn(['DAILY', 'SWING', 'SCALPING'])
+  style: RecommendationStyle = 'SWING';
+
+  @IsOptional()
+  @IsIn(['COMBINED', 'MACD_STOCH', 'LIQUIDITY_SWEEP'])
+  mode: RecommendationMode = 'COMBINED';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit = 30;
 }

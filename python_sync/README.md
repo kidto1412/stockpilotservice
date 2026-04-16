@@ -18,7 +18,7 @@ Arsitektur Ringkas
 2. **Bisnis.com RSS source**
    - Fetch RSS dari `https://bisnis.com/feed/rss.xml`
    - Extract symbols dari title/description (pattern: BBCA, TLKM, ASII, dll)
-   - Normalize ke format: source=BISNIS_COM, event_type=NEWS
+   - Normalize ke format: source=BISNIS_COM, event_type=OFFICIAL_NEWS
    - Upsert ke: `market_event_official`
 
 3. **Storage**
@@ -111,7 +111,7 @@ Catatan & Troubleshooting
 - Symbol extraction: Regex pattern `\b[A-Z]{4}\b` (BBCA, TLKM, ASII, etc)
 - Rate limit: Unlimited (RSS feed gratis)
 - Status: Stable, tidak perlu API key / registration
-- Stored as: event_type=NEWS, source=BISNIS_COM di tabel `market_event_official`
+- Stored as: event_type=OFFICIAL_NEWS, source=BISNIS_COM di tabel `market_event_official`
 
 **Validasi Cepat:**
 

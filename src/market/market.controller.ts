@@ -1,6 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import {
   EventQueryDto,
+  RecommendationListQueryDto,
   SyncStatusQueryDto,
   TechnicalQueryDto,
 } from './dto/market-query.dto';
@@ -23,5 +24,10 @@ export class MarketController {
   @Get('sync-status')
   getSyncStatus(@Query() query: SyncStatusQueryDto) {
     return this.marketService.getSyncStatus(query);
+  }
+
+  @Get('recommendations')
+  getRecommendations(@Query() query: RecommendationListQueryDto) {
+    return this.marketService.getRecommendations(query);
   }
 }

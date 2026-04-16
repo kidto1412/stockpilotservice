@@ -16,6 +16,8 @@ TV_COLUMNS = [
     "MACD.signal",
     "EMA20",
     "EMA50",
+    "Stoch.K",
+    "Stoch.D",
 ]
 
 

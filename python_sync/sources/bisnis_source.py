@@ -78,7 +78,7 @@ def fetch_bisnis_news(
                     rows.append(
                         {
                             "source": "BISNIS_COM",
-                            "event_type": "NEWS",
+                            "event_type": "OFFICIAL_NEWS",
                             "dedup_key": f"{dedup_key}_{symbol or 'GENERAL'}",
                             "symbol": symbol,
                             "title": title,
