@@ -38,7 +38,7 @@ Struktur File
 - `db.py`: DDL + upsert operations + sync logging
 - `sources/tradingview_source.py`: TradingView scanner request + normalisasi teknikal
 - `sources/bisnis_source.py`: Bisnis.com RSS parser + normalisasi news
-- `requirements.txt`: Python dependencies (requests, psycopg, python-dotenv, feedparser)
+- `requirements.txt`: Python dependencies (requests, psycopg, python-dotenv)
 
 Persiapan
 
@@ -106,7 +106,7 @@ Catatan & Troubleshooting
 **Bisnis.com RSS:**
 
 - Endpoint: `https://bisnis.com/feed/rss.xml`
-- Method: GET RSS feed (feedparser library)
+- Method: GET RSS feed (XML parser built-in)
 - Data: News articles dengan title, link, published date, summary
 - Symbol extraction: Regex pattern `\b[A-Z]{4}\b` (BBCA, TLKM, ASII, etc)
 - Rate limit: Unlimited (RSS feed gratis)

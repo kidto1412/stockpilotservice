@@ -9,10 +9,11 @@ import hashlib
 import logging
 import re
 from datetime import datetime, timezone
+from html import unescape
 from typing import Any, Dict, List
-from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
 
-import feedparser
+import requests
 
 logger = logging.getLogger("market-sync")
 
@@ -27,47 +28,41 @@ def fetch_bisnis_news(
     """
     logger.info("Fetching Bisnis.com RSS: %s", rss_url)
 
-    try:
-        feed = feedparser.parse(rss_url)
-    except Exception as exc:
-        logger.error("Bisnis RSS parse gagal: %s", exc)
-        raise
+    response = requests.get(
+        rss_url,
+        timeout=timeout_sec,
+        headers={"User-Agent": "Mozilla/5.0 StockPilotService/1.0"},
+    )
+    response.raise_for_status()
 
-    if feed.bozo and feed.bozo_exception:
-        logger.warning("RSS parse warning: %s", feed.bozo_exception)
-
-    entries = feed.get("entries", [])
-    logger.info("Bisnis RSS ditemukan %d entries", len(entries))
+    xml_text = sanitize_xml(response.text)
+    root = ET.fromstring(xml_text)
+    items = root.findall(".//item")
+    logger.info("Bisnis RSS ditemukan %d entries", len(items))
 
     rows: List[Dict[str, Any]] = []
 
-    for entry in entries:
+    for item in items:
         try:
-            title: str = entry.get("title", "").strip()
-            link: str = entry.get("link", "").strip()
-            published: str = entry.get("published", "").strip()
-            summary: str = entry.get("summary", "").strip()
+            title = clean_text(get_child_text(item, "title"))
+            link = clean_text(get_child_text(item, "link"))
+            published = clean_text(get_child_text(item, "pubDate") or get_child_text(item, "published"))
+            summary = clean_text(get_child_text(item, "description") or get_child_text(item, "summary"))
 
             if not title or not link:
                 continue
 
-            # Extract symbols dari title + summary
-            # Pattern: BBCA, TLKM, ASII, dsb (4 huruf uppercase)
-            symbols = extract_symbols(title + " " + summary)
-
-            # Parse date
+            symbols = extract_symbols(f"{title} {summary}")
             event_date = parse_published_date(published)
-
-            # Dedup key: hash dari URL atau title
             dedup_key = hashlib.sha256(link.encode()).hexdigest()[:16]
 
-            # Untuk setiap symbol ditemukan, buat satu row event
-            if symbols:
-                for symbol in symbols:
-                    row: Dict[str, Any] = {
+            symbol_values = symbols if symbols else [None]
+            for symbol in symbol_values:
+                rows.append(
+                    {
                         "source": "BISNIS_COM",
                         "event_type": "NEWS",
-                        "dedup_key": f"{dedup_key}_{symbol}",
+                        "dedup_key": f"{dedup_key}_{symbol or 'GENERAL'}",
                         "symbol": symbol,
                         "title": title,
                         "event_date": event_date,
@@ -76,21 +71,44 @@ def fetch_bisnis_news(
                         "raw_payload": {
                             "url": link,
                             "published": published,
-                            "summary": summary[:500],  # Limit summary
+                            "summary": summary[:1000],
                             "source_feed": "bisnis.com",
+                            "symbols": symbols,
                         },
                     }
-                    rows.append(row)
-            else:
-                # Jika tidak ada symbol, skip (atau record dengan symbol=NULL)
-                logger.debug("No symbols found in: %s", title)
-
+                )
         except Exception as exc:
             logger.warning("Skip entry (error): %s", exc)
             continue
 
     logger.info("Bisnis RSS normalized %d news items", len(rows))
     return rows
+
+
+def sanitize_xml(xml_text: str) -> str:
+    """Bersihkan XML RSS yang kadang mengandung karakter ilegal atau & mentah."""
+    cleaned = xml_text.replace("\x00", "")
+    cleaned = re.sub(r"[\x01-\x08\x0b\x0c\x0e-\x1f]", "", cleaned)
+    cleaned = re.sub(
+        r"&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9a-fA-F]+;)",
+        "&amp;",
+        cleaned,
+    )
+    return cleaned
+
+
+def get_child_text(item: ET.Element, tag_name: str) -> str:
+    child = item.find(tag_name)
+    if child is None or child.text is None:
+        return ""
+    return child.text
+
+
+def clean_text(text: str) -> str:
+    text = unescape(text or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def extract_symbols(text: str) -> List[str]:
