@@ -19,10 +19,6 @@ from db import (
 from sources.tradingview_source import fetch_tradingview_snapshots
 from sources.tradingview_chart_source import fetch_tradingview_daily_candles
 from sources.bisnis_source import fetch_bisnis_news
-from sources.yahoo_history_source import (
-    fetch_yahoo_daily_history,
-    fetch_yahoo_daily_history_between,
-)
 
 
 logging.basicConfig(
@@ -136,43 +132,11 @@ def _run_daily_chart(
                 except Exception as tv_exc:
                     tv_failed += 1
                     logger.warning(
-                        "Chart batch %d/%d: TradingView failed, trying Yahoo fallback... (error: %s)",
+                        "Chart batch %d/%d: TradingView failed, skip this batch (reason: %s)",
                         batch_num,
                         total_batches,
                         str(tv_exc)[:80],
                     )
-
-                    # Fallback ke Yahoo
-                    try:
-                        end_at = datetime.now(timezone.utc)
-                        start_at = end_at - timedelta(days=max(history_years * 365, 1))
-                        batch_rows = fetch_yahoo_daily_history_between(
-                            symbols=batch_symbols,
-                            timeout_sec=settings.request_timeout_sec,
-                            start_at=start_at,
-                            end_at=end_at,
-                            retry_max=settings.yahoo_retry_max,
-                            min_delay_sec=settings.yahoo_min_delay_sec,
-                            max_delay_sec=settings.yahoo_max_delay_sec,
-                            backoff_base_sec=settings.yahoo_backoff_base_sec,
-                        )
-                        if batch_rows:
-                            batch_total = insert_price_history(conn, batch_rows)
-                            total_rows += batch_total
-                            logger.info(
-                                "Chart batch %d/%d (Yahoo fallback): +%d rows, symbols=%d",
-                                batch_num,
-                                total_batches,
-                                batch_total,
-                                len(batch_symbols),
-                            )
-                    except Exception as fallback_exc:
-                        logger.warning(
-                            "Chart batch %d/%d: both TradingView + Yahoo failed, skip this batch (reason: %s)",
-                            batch_num,
-                            total_batches,
-                            str(fallback_exc)[:80],
-                        )
 
                 # Throttle antar batch
                 if batch_num < total_batches:

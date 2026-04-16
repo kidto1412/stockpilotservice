@@ -834,19 +834,15 @@ export class AppService {
       return [];
     }
 
-    return rows
-      .reverse()
-      .map((row) => ({
-        t: row.snapshot_at.toISOString(),
-        o: row.close_price ?? 0,
-        h: row.close_price ?? 0,
-        l: row.close_price ?? 0,
-        c: row.close_price ?? 0,
-        v:
-          typeof row.volume === 'bigint'
-            ? Number(row.volume)
-            : (row.volume ?? 0),
-      }));
+    return rows.reverse().map((row) => ({
+      t: row.snapshot_at.toISOString(),
+      o: row.close_price ?? 0,
+      h: row.close_price ?? 0,
+      l: row.close_price ?? 0,
+      c: row.close_price ?? 0,
+      v:
+        typeof row.volume === 'bigint' ? Number(row.volume) : (row.volume ?? 0),
+    }));
   }
 
   private getRangeDays(range: ChartRange) {

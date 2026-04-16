@@ -18,11 +18,13 @@ def fetch_tradingview_daily_candles(
 ) -> List[Dict[str, Any]]:
     """
     Ambil chart bars harian dari TradingView untuk multi-tahun backfill.
-    Endpoint: https://charts-node.tradingview.com/chart.t
-    Stable, tidak rate-limited, official TradingView chart data.
+    Indonesia stocks: IDX:{symbol}
+    Fallback endpoints jika primary gagal.
+    Stable, stabil tanpa rate-limiting.
     """
     rows: List[Dict[str, Any]] = []
     normalized_symbols = _normalize_symbols(symbols)
+    success_count = 0
     failed_count = 0
 
     for idx, symbol in enumerate(normalized_symbols, start=1):
@@ -32,19 +34,47 @@ def fetch_tradingview_daily_candles(
                 timeout_sec=timeout_sec,
                 years=years,
             )
+            
+            # Normalize to storage format
             for candle in candles:
-                rows.append(candle)
+                try:
+                    rows.append({
+                        "source": "TRADINGVIEW",
+                        "symbol": symbol,
+                        "timeframe": "1D",
+                        "price_at": candle["price_at"],
+                        "open_price": candle.get("open", candle.get("close")),
+                        "high_price": candle.get("high", candle.get("close")),
+                        "low_price": candle.get("low", candle.get("close")),
+                        "close_price": candle.get("close"),
+                        "volume": candle.get("volume", 0),
+                        "raw_payload": candle,
+                    })
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.debug("Normalize candle error for %s: %s", symbol, str(e)[:50])
+                    continue
 
-            logger.info(
-                "TradingView chart fetch %d/%d: symbol=%s, rows=%d",
-                idx,
-                len(normalized_symbols),
-                symbol,
-                len(candles),
-            )
+            if candles:
+                success_count += 1
+                logger.info(
+                    "TradingView chart fetch %d/%d: symbol=%s, rows=%d",
+                    idx,
+                    len(normalized_symbols),
+                    symbol,
+                    len(candles),
+                )
+            else:
+                logger.warning(
+                    "TradingView chart fetch %d/%d: symbol=%s, no rows available",
+                    idx,
+                    len(normalized_symbols),
+                    symbol,
+                )
+                failed_count += 1
+                
         except Exception as exc:
             failed_count += 1
-            logger.warning(
+            logger.debug(
                 "TradingView chart skip symbol=%s reason=%s",
                 symbol,
                 str(exc)[:100],
@@ -52,13 +82,14 @@ def fetch_tradingview_daily_candles(
 
         # Throttle antar simbol
         if idx < len(normalized_symbols):
-            time.sleep(0.3)
+            time.sleep(0.5)
 
-    if failed_count:
+    if success_count > 0 or failed_count > 0:
         logger.info(
-            "TradingView chart fetch complete: success=%d, failed=%d",
-            len(normalized_symbols) - failed_count,
+            "TradingView chart fetch complete: success=%d, failed=%d, total_rows=%d",
+            success_count,
             failed_count,
+            len(rows),
         )
 
     return rows
@@ -70,74 +101,97 @@ def _fetch_symbol_daily_candles(
     years: int,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch chart bars untuk 1 simbol dari TradingView.
-    Gunakan endpoint chart unofficial tapi stable.
+    Fetch chart bars untuk 1 simbol dari TradingView menggunakan public endpoint.
+    Indonesia stocks di TradingView pakai format IDX:{symbol}
     """
-    # TradingView chart formula: IDX:{symbol} untuk Indonesia
     tv_symbol = f"IDX:{symbol}"
 
-    # Constructor request untuk chart.t endpoint
     headers = {
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://www.tradingview.com/",
     }
 
-    # Request payload untuk chart bars API
-    # From: now - N years, To: now
-    import_payload = {
-        "symbols": [tv_symbol],
-        "range": {"from": -years * 365 * 24 * 3600, "to": 0},  # relative time in seconds
-        "resolution": "D",  # daily
-    }
+    # Calculate time range: from N years ago to now
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    from_ts = now_ts - (years * 365 * 24 * 3600)
 
-    url = "https://scanner.tradingview.com/indonesia/scan"
-
-    # Fallback: try direct chart endpoint
-    chart_urls = [
-        "https://charts-node.tradingview.com/chart.t",
-        "https://scanner.tradingview.com/indonesia/scan",
-    ]
-
-    candles = []
-    for chart_url in chart_urls:
-        try:
-            if "chart.t" in chart_url:
-                candles = _fetch_via_direct_api(tv_symbol, chart_url, headers, timeout_sec)
-            else:
-                candles = _fetch_via_scanner(tv_symbol, chart_url, headers, timeout_sec)
-
+    # Try multiple endpoints untuk fetch chart data
+    # Endpoint 1: Direct chart API (preferred)
+    try:
+        url = "https://charts-node.tradingview.com/chart.t"
+        params = {
+            "symbol": tv_symbol,
+            "resolution": "D",
+            "from": from_ts,
+            "to": now_ts,
+        }
+        response = requests.get(url, params=params, headers=headers, timeout=timeout_sec)
+        if response.status_code == 200:
+            data = response.json()
+            candles = _parse_chart_response(data)
             if candles:
-                break
-        except Exception as e:
-            logger.debug("TradingView chart URL %s failed: %s", chart_url, str(e)[:50])
-            continue
+                return candles
+    except Exception as e:
+        logger.debug("TradingView direct API failed (%s): %s", tv_symbol, str(e)[:50])
 
-    if not candles:
-        logger.warning("TradingView chart %s: no candles returned", symbol)
-        return []
+    # Endpoint 2: Scanner endpoint as fallback
+    try:
+        url = "https://scanner.tradingview.com/chart/snapshot"
+        payload = {
+            "symbols": [tv_symbol],
+            "fields": ["name", "close", "open", "high", "low", "volume", "Datetime"],
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=timeout_sec)
+        if response.status_code == 200:
+            data = response.json()
+            candles = _parse_scanner_response(data)
+            if candles:
+                return candles
+    except Exception as e:
+        logger.debug("TradingView scanner API failed (%s): %s", tv_symbol, str(e)[:50])
 
-    # Normalize to storage format
-    rows = []
-    for candle in candles:
+    # Endpoint 3: India/Asia historical data endpoint (last resort)
+    try:
+        # Some TradingView mirrors or alternatives
+        url = f"https://api.taapi.io/historicaldata"
+        params = {
+            "symbol": f"{symbol}",
+            "exchange": "IDX",
+            "interval": "1d",
+            "backtrack": years * 365,
+        }
+        response = requests.get(url, params=params, headers=headers, timeout=timeout_sec)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0:
+                candles = _convert_taapi_to_candles(data)
+                if candles:
+                    return candles
+    except Exception as e:
+        logger.debug("Alternative API failed (%s): %s", symbol, str(e)[:50])
+
+    return []
+
+
+def _convert_taapi_to_candles(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert taapi.io historical data format to candle format."""
+    candles = []
+    for item in data:
         try:
-            rows.append({
-                "source": "TRADINGVIEW",
-                "symbol": symbol,
-                "timeframe": "1D",
-                "price_at": candle["price_at"],
-                "open_price": candle.get("open"),
-                "high_price": candle.get("high"),
-                "low_price": candle.get("low"),
-                "close_price": candle.get("close"),
-                "volume": candle.get("volume"),
-                "raw_payload": candle,
-            })
-        except Exception as e:
-            logger.debug("Normalize candle error: %s", str(e)[:50])
+            candle = {
+                "price_at": datetime.fromisoformat(item.get("time", "").replace("Z", "+00:00")),
+                "open": float(item.get("open", 0)),
+                "high": float(item.get("high", 0)),
+                "low": float(item.get("low", 0)),
+                "close": float(item.get("close", 0)),
+                "volume": int(float(item.get("volume", 0))),
+                "timestamp": int(datetime.fromisoformat(item.get("time", "").replace("Z", "+00:00")).timestamp()),
+            }
+            candles.append(candle)
+        except Exception:
             continue
-
-    return rows
+    return candles
 
 
 def _fetch_via_direct_api(

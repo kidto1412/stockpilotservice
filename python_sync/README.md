@@ -3,7 +3,7 @@
 ## Tujuan
 
 - Ambil data teknikal (OHLCV, RSI, MACD, EMA, volume) dari endpoint TradingView scanner.
-- Ambil data candle harian historis multi-tahun (default 10 tahun) dari Yahoo Finance chart API.
+- Ambil data candle harian historis multi-tahun (default 10 tahun) dari TradingView chart API.
 - Ambil news & artikel dari RSS feed Bisnis.com (gratis unlimited).
 - Scan semua saham IDX atau symbols pilihan.
 - Simpan ke DB PostgreSQL sendiri (tabel `market_technical_snapshot`, `market_price_history`, `market_event_official`).
@@ -16,18 +16,18 @@ Arsitektur Ringkas
    - Ambil snapshot teknikal semua saham IDX (kolom: close, volume, RSI, MACD, EMA20, EMA50)
    - Upsert ke: `market_technical_snapshot`
 
-2. **TradingView Chart source**
-   - Fetch OHLCV historis daily multi-tahun dari https://charts-node.tradingview.com (unofficial API)
-   - Stable, tidak rate-limited, resmi dari TradingView
-   - Primary source untuk chart history backfill
-   - Fallback ke Yahoo Finance jika TradingView gagal
+2. **TradingView Chart source** (PRIMARY ONLY)
+   - Fetch OHLCV historis daily multi-tahun dari https://charts-node.tradingview.com
+   - Indonesia stocks format: IDX:{symbol} (e.g., IDX:BBCA)
+   - Stable, tidak rate-limited, official TradingView chart data
+   - Primary dan SATU-SATUNYA source untuk chart history (no Yahoo fallback)
+   - Jika fetch gagal: batch di-skip (tidak crash, lanjut batch berikutnya)
    - Upsert ke: `market_price_history` (source=TRADINGVIEW)
 
-3. **Yahoo Finance History source** (legacy, fallback only)
-   - Endpoint: https://query1.finance.yahoo.com (+ query2)
-   - Fallback jika TradingView gagal
-   - Rate-limited (sering 429), graceful error handling
-   - Upsert ke: `market_price_history` (source=YAHOO)
+3. **Yahoo Finance History source** (DEPRECATED - removed)
+   - Endpoint lama: https://query1.finance.yahoo.com (sering 429, tidak reliable)
+   - **Status**: Dihapus sepenuhnya, sudah tidak digunakan
+   - Alasan: Rate-limit masalah, TradingView lebih stabil
 
 4. **Bisnis.com RSS source**
    - Fetch RSS dari `https://bisnis.com/feed/rss.xml`
@@ -35,26 +35,27 @@ Arsitektur Ringkas
    - Normalize ke format: source=BISNIS_COM, event_type=OFFICIAL_NEWS
    - Upsert ke: `market_event_official`
 
-4. **Storage**
+5. **Storage**
    - `market_technical_snapshot`: teknikal snapshots
    - `market_price_history`: candle history harian
    - `market_event_official`: news & events
    - `sync_run_log`: sync status log per source
 
-5. **Scheduler**
+6. **Scheduler**
    - Mode sekali jalan (`python sync_market_data.py --full-sync`)
    - Mode interval menit (`python sync_market_data.py --interval-min 15`)
    - Opsional cron/systemd di server
 
 Struktur File
 
-- `sync_market_data.py`: Entrypoint CLI + scheduler loop (TradingView + Bisnis.com)
-- `sources/yahoo_history_source.py`: Yahoo chart fetcher untuk candle history harian
-- `config.py`: Environment config (DATABASE_URL, endpoint URLs, timeout, interval)
-- `db.py`: DDL + upsert operations + sync logging
+- `sync_market_data.py`: Entrypoint CLI + scheduler loop (TradingView chart + bisnis.com)
+- `sources/tradingview_chart_source.py`: TradingView chart API fetcher untuk candle history (PRIMARY)
 - `sources/tradingview_source.py`: TradingView scanner request + normalisasi teknikal
 - `sources/bisnis_source.py`: Bisnis.com RSS parser + normalisasi news
+- `config.py`: Environment config (DATABASE_URL, endpoint URLs, timeout, interval)
+- `db.py`: DDL + upsert operations + sync logging
 - `requirements.txt`: Python dependencies (requests, psycopg, python-dotenv)
+- `sources/yahoo_history_source.py`: (DEPRECATED - no longer used)
 
 Persiapan
 
@@ -72,13 +73,9 @@ Persiapan
      - SYNC_INTERVAL_MIN (default: 30 menit)
      - TRADINGVIEW_ALL_PAGE_SIZE (default: 500)
      - TRADINGVIEW_ALL_MAX_ROWS (default: 3000)
-   - HISTORY_BACKFILL_YEARS (default: 10)
-   - HISTORY_INCREMENTAL_DAYS (default: 30)
-   - YAHOO_RETRY_MAX (default: 5)
-   - YAHOO_BACKOFF_BASE_SEC (default: 1.5)
-   - YAHOO_MIN_DELAY_SEC (default: 0.2)
-   - YAHOO_MAX_DELAY_SEC (default: 0.8)
-   - HISTORY_BATCH_SIZE (default: 50)
+     - HISTORY_BACKFILL_YEARS (default: 10)
+     - HISTORY_INCREMENTAL_DAYS (default: 30)
+     - HISTORY_BATCH_SIZE (default: 50)
 
 Jalankan Sinkron Sekali (tulisan symbols optional)
 
@@ -152,16 +149,16 @@ Catatan & Troubleshooting
 - Rate limit: Unlimited (unofficial endpoint)
 - Status: Stable, tidak ada 403 Cloudflare
 
-**Yahoo Finance History (optional):**
+**TradingView Chart API (Primary Data Source):**
 
-- Endpoint: `https://query1.finance.yahoo.com/v8/finance/chart/` + fallback `query2`
-- Method: GET chart API
-- Data: OHLCV historis daily multi-tahun
-- Rate limit: **Restricted** (sering 429 untuk bulk backfill)
-- Status: Unstable untuk backfill masif, auto-graceful pada error
-- **Fallback**: Jika Yahoo error terus, history batch di-skip (log warning), sync lanjut tanpa crash
-  - Chart endpoint tetap berfungsi: fallback ke snapshot teknikal TradingView (limited recent data)
-  - Rekomendasi tetap berfungsi: menggunakan snapshot teknikal terbaru
+- Endpoint: `https://charts-node.tradingview.com/chart.t`
+- Indonesia symbol format: `IDX:BBCA`, `IDX:TLKM`, `IDX:ASII`, dll
+- Method: GET dengan params (symbol, resolution=D, from, to)
+- Data: OHLCV historical bars, multi-tahun (10-30 tahun)
+- Rate limit: **NONE** (stable, resmi, tidak rate-limited)
+- Status: **PRIMARY ONLY** (no Yahoo fallback anymore)
+- Error handling: Per-symbol graceful (failed symbol logged, continue next)
+- Batch error handling: Failed batch skipped, sync continues (no crash)
 
 **Bisnis.com RSS:**
 
@@ -173,26 +170,40 @@ Catatan & Troubleshooting
 - Status: Stable, tidak perlu API key / registration
 - Stored as: event_type=OFFICIAL_NEWS, source=BISNIS_COM di tabel `market_event_official`
 
-**Strategi Jika Yahoo 429 Masalah:**
+**Strategi Data Source untuk Chart History:**
 
-1. **Default behavior (RECOMMENDED)**: Gunakan TradingView chart auto-fallback
-   ```bash
-   python python_sync/sync_market_data.py --full-sync
-   ```
-   → Coba TradingView dulu, jika gagal fallback ke Yahoo, jika keduanya gagal skip batch
-   → Chart endpoint: TradingView > Yahoo > Snapshot fallback (intraday)
-   → Tidak crash, lanjut sync Bisnis news
+1. **TradingView Chart API (PRIMARY - ONLY)**
+   - Endpoint: `https://charts-node.tradingview.com/chart.t`
+   - Indonesia symbol format: `IDX:BBCA`, `IDX:TLKM`, dll
+   - Method: GET dengan params (symbol, resolution=D, from, to timestamps)
+   - Data: OHLCV historical bars, multi-tahun support (10-30 tahun available)
+   - Rate limit: None (resmi, stable, tidak rate-limited)
+   - **Status CURRENT**: PRIMARY source SAJA, tanpa fallback ke Yahoo
+   - Error handling: Per-batch graceful (failed batch di-skip, lanjut batch berikutnya, tidak crash)
+   - Fallback jika empty: Chart endpoint akan serve snapshot teknikal (intraday last 30 bars)
 
-2. **Skip data fetch selamanya** (gunakan hanya latest snapshot):
-   ```bash
-   python python_sync/sync_market_data.py --full-sync --skip-history
-   ```
-   → Hanya ambil snapshot teknikal terbaru, tidak ada history
-   → Chart fallback ke 30 recent intraday snapshot TradingView
+2. **Jika TradingView API return 0 candles:**
+   - Kemungkinan penyebab:
+     - Format symbol tidak sesuai (harus `IDX:SYMBOL` untuk Indonesia stocks)
+     - API endpoint berubah atau rate-limited dari IP server (unlikely)
+     - Data gap untuk symbol tertentu (delisting, new IPO, etc)
+   - Solution:
+     - Cek logs untuk symbol mana yang return 0
+     - Verify symbol di https://www.tradingview.com/markets/stocks-indonesia/
+     - Retry dengan `--history-batch-size 25` (lebih lambat, load lebih ringan)
+     - Gunakan `--skip-history` untuk hanya ambil snapshot (no backfill)
 
-3. **Tunggu akses stabil kembali**:
-   - Jika TradingView/Yahoo ramai, coba lagi nanti
-   - Jalankan ulang `--full-sync` untuk backfill
+3. **Chart endpoint behavior (src/app.service.ts):**
+   - Tier 1: Coba db query `market_price_history` WHERE source='TRADINGVIEW' (primary)
+   - Tier 2: Jika kosong, fallback ke recent snapshot teknikal (last 30 bars intraday)
+   - Result: Chart endpoint **selalu** return data (no "no data" error), minimal snapshot
+
+**Catatan PENTING:**
+
+- Yahoo Finance source sudah **DIHAPUS sepenuhnya**.
+- Data history sekarang HANYA dari TradingView (reliable, no rate-limit).
+- Jika TradingView fetch gagal untuk symbol tertentu → batch di-skip → chart endpoint fallback ke snapshot.
+- **Tidak ada lagi 429 error dari Yahoo Finance!**
 
 **Validasi Cepat:**
 
