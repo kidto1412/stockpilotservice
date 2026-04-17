@@ -243,6 +243,7 @@ export class MarketService {
       LIMIT ${Math.max(query.limit * 5, 100)}
     `);
 
+    // Tier 1: Strict cross-based signals
     const picked = rows
       .map((row) =>
         this.buildRecommendation(row, style, mode, {
@@ -255,9 +256,10 @@ export class MarketService {
       .sort((a, b) => b.score - a.score)
       .slice(0, query.limit);
 
-    const finalPicked =
+    // Tier 2: State-based bullish signals (looser)
+    const fallback =
       picked.length > 0
-        ? picked
+        ? []
         : rows
             .map((row) =>
               this.buildRecommendationState(row, style, mode, {
@@ -270,6 +272,31 @@ export class MarketService {
             .sort((a, b) => b.score - a.score)
             .slice(0, query.limit);
 
+    // Tier 3: Any bullish state (weakest filter - ensure we always return something)
+    const finalPicked =
+      picked.length > 0
+        ? picked
+        : fallback.length > 0
+          ? fallback
+          : rows
+              .map((row) =>
+                this.buildRecommendationAnyBullish(row, style, {
+                  stochasticSetting: styleConfig.stochasticSetting,
+                  stochBuyThreshold,
+                  minVolumeRatio,
+                }),
+              )
+              .filter((item) => item.isMatch)
+              .sort((a, b) => b.score - a.score)
+              .slice(0, query.limit);
+
+    const matchPolicy =
+      picked.length > 0
+        ? 'TIER_1_STRICT_CROSS'
+        : fallback.length > 0
+          ? 'TIER_2_STATE_BULLISH'
+          : 'TIER_3_FUZZY_BULLISH';
+
     return {
       config: {
         source: normalizedSource,
@@ -280,7 +307,7 @@ export class MarketService {
         stochBuyThreshold,
         minVolumeRatio,
         crossLookback,
-        matchPolicy: picked.length > 0 ? 'STRICT_CROSS' : 'STATE_FALLBACK',
+        matchPolicy,
       },
       count: finalPicked.length,
       items: finalPicked.map((item) => item.payload),
@@ -543,6 +570,84 @@ export class MarketService {
           mode,
           stochasticSetting: styleConfig.stochasticSetting,
           signalType: 'STATE_FALLBACK',
+        },
+      },
+    };
+  }
+
+  private buildRecommendationAnyBullish(
+    row: RecommendationBaseRow,
+    style: RecommendationStyle,
+    styleConfig: {
+      stochasticSetting: string;
+      stochBuyThreshold: number;
+      minVolumeRatio: number;
+    },
+  ) {
+    const stochK = this.getStochValue(row.raw_payload, 8);
+    const stochD = this.getStochValue(row.raw_payload, 9);
+
+    // Any bullish signal is enough (OR logic)
+    const macdBullish =
+      row.macd !== null &&
+      row.macd_signal !== null &&
+      row.macd > row.macd_signal;
+
+    const stochBullish =
+      stochK !== null &&
+      stochD !== null &&
+      stochK > stochD &&
+      stochK <= styleConfig.stochBuyThreshold;
+
+    const rsiBullish = row.rsi !== null && row.rsi >= 50;
+
+    const volumeRatio = this.getVolumeRatio(row.volume, row.prev_volume);
+    const priceAboveEma =
+      row.close_price !== null &&
+      row.ema20 !== null &&
+      row.close_price > row.ema20;
+
+    const isMatch = macdBullish || stochBullish || rsiBullish || priceAboveEma;
+
+    const score =
+      (macdBullish ? 25 : 0) +
+      (stochBullish ? 20 : 0) +
+      (rsiBullish ? 15 : 0) +
+      (priceAboveEma ? 10 : 0) +
+      (volumeRatio !== null && volumeRatio >= styleConfig.minVolumeRatio
+        ? 5
+        : 0);
+
+    return {
+      isMatch,
+      score,
+      payload: {
+        symbol: row.symbol,
+        source: row.source,
+        snapshotAt: row.snapshot_at,
+        style,
+        score,
+        signal: isMatch ? 'BUY_CANDIDATE' : 'WAIT',
+        indicators: {
+          closePrice: row.close_price,
+          rsi: row.rsi,
+          macd: row.macd,
+          macdSignal: row.macd_signal,
+          stochK,
+          stochD,
+          ema20: row.ema20,
+          ema50: row.ema50,
+          volumeRatio,
+        },
+        checks: {
+          macdGoldenCross: macdBullish,
+          stochGoldenCross: stochBullish,
+          liquiditySweepBullish: priceAboveEma,
+        },
+        rule: {
+          mode: 'ANY_BULLISH',
+          stochasticSetting: styleConfig.stochasticSetting,
+          signalType: 'FUZZY_FALLBACK',
         },
       },
     };
