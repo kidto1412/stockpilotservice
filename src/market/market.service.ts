@@ -181,7 +181,7 @@ export class MarketService {
   }
 
   async getRecommendations(query: RecommendationListQueryDto) {
-    const normalizedSource = (query.source ?? 'TRADINGVIEW').toUpperCase();
+    const normalizedSource = this.normalizeSource(query.source);
     const style = query.style ?? 'SWING';
     const mode = query.mode ?? 'COMBINED';
     const timeframe = query.timeframe ?? this.getDefaultTimeframeByStyle(style);
@@ -210,7 +210,7 @@ export class MarketService {
           raw_payload,
           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_at DESC) AS rn
         FROM market_technical_snapshot
-        WHERE source = ${normalizedSource}
+        ${normalizedSource ? Prisma.sql`WHERE source = ${normalizedSource}` : Prisma.sql``}
       ), latest AS (
         SELECT * FROM ranked WHERE rn = 1
       ), previous AS (
@@ -348,8 +348,9 @@ export class MarketService {
       conditions.push(Prisma.sql`symbol = ${query.symbol.toUpperCase()}`);
     }
 
-    if (query.source) {
-      conditions.push(Prisma.sql`source = ${query.source.toUpperCase()}`);
+    const normalizedSource = this.normalizeSource(query.source);
+    if (normalizedSource) {
+      conditions.push(Prisma.sql`source = ${normalizedSource}`);
     }
 
     if (query.from) {
@@ -365,6 +366,16 @@ export class MarketService {
     }
 
     return Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+  }
+
+  private normalizeSource(source?: string) {
+    const normalized = (source ?? 'TRADINGVIEW').trim().toUpperCase();
+
+    if (!normalized || normalized === 'ALL' || normalized === 'ANY' || normalized === '*') {
+      return null;
+    }
+
+    return normalized;
   }
 
   private buildEventWhere(query: EventQueryDto): Prisma.Sql {

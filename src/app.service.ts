@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, MessageEvent } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   AutoRecommendationRequestDto,
   ChartIndicatorQueryDto,
@@ -155,7 +156,7 @@ export class AppService {
   }
 
   async getMarketDataList(query: MarketDataListQueryDto) {
-    const source = (query.source ?? 'TRADINGVIEW').toUpperCase();
+    const source = this.normalizeMarketSource(query.source);
 
     const rows = await this.prisma.$queryRaw<DbMarketRow[]>`
       WITH ranked AS (
@@ -173,7 +174,7 @@ export class AppService {
           raw_payload,
           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY snapshot_at DESC) AS rn
         FROM market_technical_snapshot
-        WHERE source = ${source}
+        ${source ? Prisma.sql`WHERE source = ${source}` : Prisma.sql``}
       )
       SELECT
         source,
@@ -198,6 +199,16 @@ export class AppService {
       count: rows.length,
       items: rows.map((row) => this.mapDbRowToMarketPayload(row, null)),
     };
+  }
+
+  private normalizeMarketSource(source?: string) {
+    const normalized = (source ?? 'TRADINGVIEW').trim().toUpperCase();
+
+    if (!normalized || normalized === 'ALL' || normalized === 'ANY' || normalized === '*') {
+      return null;
+    }
+
+    return normalized;
   }
 
   async getMarketData(symbol: string) {
