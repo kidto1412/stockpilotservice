@@ -23,10 +23,10 @@ _RE_FRAME = re.compile(r"~m~(\d+)~m~")
 def fetch_tradingview_daily_candles(
     symbols: list[str],
     timeout_sec: int,
-    years: int,
+    request_bars: int,
 ) -> List[Dict[str, Any]]:
     """
-    Ambil candle harian multi-tahun dari TradingView via WebSocket chart-session.
+    Ambil candle harian dari TradingView via WebSocket chart-session.
     Ini jalur yang dipakai web chart TradingView, bukan endpoint scanner/snapshot.
     """
     rows: List[Dict[str, Any]] = []
@@ -39,7 +39,7 @@ def fetch_tradingview_daily_candles(
             candles = _fetch_symbol_daily_candles(
                 symbol=symbol,
                 timeout_sec=timeout_sec,
-                years=years,
+                request_bars=request_bars,
             )
 
             if candles:
@@ -83,7 +83,7 @@ def fetch_tradingview_daily_candles(
 def _fetch_symbol_daily_candles(
     symbol: str,
     timeout_sec: int,
-    years: int,
+    request_bars: int,
 ) -> List[Dict[str, Any]]:
     """
     Ambil candle harian dari WebSocket TradingView untuk satu simbol.
@@ -139,9 +139,7 @@ def _fetch_symbol_daily_candles(
         resolve_payload = f'={{"symbol":"{tv_symbol}","adjustment":"splits","session":"regular"}}'
         _send_tv_message(ws, "resolve_symbol", [chart_session, "symbol_1", resolve_payload])
 
-        # 1D resolution, request enough bars for N years.
-        # Gunakan 390 hari/tahun untuk cover hari bursa + buffer split/holiday.
-        bars = max(400, years * 390)
+        bars = max(60, request_bars)
         _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "D", bars])
         _send_tv_message(ws, "switch_timezone", [chart_session, "Etc/UTC"])
 

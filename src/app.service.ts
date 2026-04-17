@@ -731,14 +731,29 @@ export class AppService {
     interval: ChartInterval,
     range: ChartRange,
   ) {
+    const dbDailyCandles = await this.fetchDbDailyCandles(symbol, range);
     if (interval === '1d') {
-      const dbCandles = await this.fetchDbDailyCandles(symbol, range);
-      if (dbCandles.length > 0) {
-        return dbCandles;
-      }
+      return dbDailyCandles;
     }
 
-    return this.fetchYahooCandles(symbol, interval, range);
+    const dbIntradayCandles = await this.fetchDbIntradayCandles(
+      symbol,
+      interval,
+      range,
+    );
+
+    if (dbIntradayCandles.length > 0) {
+      return dbIntradayCandles;
+    }
+
+    // Fallback aman: tetap layani chart dari daily history agar tidak error ke client.
+    if (dbDailyCandles.length > 0) {
+      return dbDailyCandles;
+    }
+
+    return this.generateFallbackFromSnapshot(
+      symbol.toUpperCase().replace('.JK', '').trim(),
+    );
   }
 
   private async fetchDbDailyCandles(symbol: string, range: ChartRange) {
@@ -843,6 +858,93 @@ export class AppService {
       v:
         typeof row.volume === 'bigint' ? Number(row.volume) : (row.volume ?? 0),
     }));
+  }
+
+  private async fetchDbIntradayCandles(
+    symbol: string,
+    interval: Exclude<ChartInterval, '1d'>,
+    range: ChartRange,
+  ) {
+    const normalizedSymbol = symbol.toUpperCase().replace('.JK', '').trim();
+
+    // Intraday pakai snapshot DB; untuk range besar batasi supaya query tetap ringan.
+    const lookbackDays = Math.min(this.getRangeDays(range), 30);
+    const fromDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        snapshot_at: Date;
+        close_price: number | null;
+        volume: bigint | number | null;
+      }>
+    >`
+      SELECT
+        snapshot_at,
+        close_price,
+        volume
+      FROM market_technical_snapshot
+      WHERE source = 'TRADINGVIEW'
+        AND symbol = ${normalizedSymbol}
+        AND snapshot_at >= ${fromDate}
+      ORDER BY snapshot_at ASC
+      LIMIT 20000
+    `;
+
+    if (!rows.length) {
+      return [];
+    }
+
+    const bucketMs = this.intervalToMs(interval);
+    const buckets = new Map<
+      number,
+      { o: number; h: number; l: number; c: number; v: number }
+    >();
+
+    for (const row of rows) {
+      const close = row.close_price ?? 0;
+      if (close <= 0) continue;
+
+      const ts = row.snapshot_at.getTime();
+      const bucketTs = Math.floor(ts / bucketMs) * bucketMs;
+      const volume =
+        typeof row.volume === 'bigint' ? Number(row.volume) : (row.volume ?? 0);
+
+      const existing = buckets.get(bucketTs);
+      if (!existing) {
+        buckets.set(bucketTs, {
+          o: close,
+          h: close,
+          l: close,
+          c: close,
+          v: volume,
+        });
+        continue;
+      }
+
+      existing.h = Math.max(existing.h, close);
+      existing.l = Math.min(existing.l, close);
+      existing.c = close;
+      existing.v = Math.max(existing.v, volume);
+    }
+
+    return Array.from(buckets.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([bucketTs, c]) => ({
+        t: new Date(bucketTs).toISOString(),
+        o: c.o,
+        h: c.h,
+        l: c.l,
+        c: c.c,
+        v: c.v,
+      }));
+  }
+
+  private intervalToMs(interval: Exclude<ChartInterval, '1d'>) {
+    if (interval === '1m') return 60_000;
+    if (interval === '5m') return 5 * 60_000;
+    if (interval === '15m') return 15 * 60_000;
+    if (interval === '30m') return 30 * 60_000;
+    return 60 * 60_000; // 60m
   }
 
   private getRangeDays(range: ChartRange) {

@@ -45,11 +45,18 @@ def run_once(
             )
         synced_symbols = _run_tradingview(conn, settings, symbols)
         if include_history and synced_symbols:
+            request_bars = (
+                max(60, history_years * 390)
+                if full_sync
+                else max(120, settings.history_incremental_days * 4)
+            )
+            sync_mode = "FULL_BACKFILL" if full_sync else "INCREMENTAL"
             _run_daily_chart(
                 conn,
                 settings,
                 synced_symbols,
-                history_years=history_years,
+                request_bars=request_bars,
+                sync_mode=sync_mode,
                 batch_size=history_batch_size,
             )
         _run_bisnis_news(conn, settings)
@@ -87,7 +94,8 @@ def _run_daily_chart(
     conn,
     settings,
     symbols: List[str],
-    history_years: int = 10,
+    request_bars: int,
+    sync_mode: str,
     batch_size: int = 50,
 ) -> None:
     """Fetch chart data dari TradingView (primary only)."""
@@ -113,7 +121,7 @@ def _run_daily_chart(
                     batch_rows = fetch_tradingview_daily_candles(
                         symbols=batch_symbols,
                         timeout_sec=settings.request_timeout_sec,
-                        years=history_years,
+                        request_bars=request_bars,
                     )
                     if batch_rows:
                         tv_success += 1
@@ -150,8 +158,8 @@ def _run_daily_chart(
                     str(batch_exc)[:100],
                 )
 
-        run.message = f"BACKFILL_{history_years}Y upsert candle rows: {total_rows}, symbols={len(symbols)}, TV_success={tv_success}, TV_failed={tv_failed}"
-        logger.info("Chart history sync: %s", run.message)
+        run.message = f"{sync_mode} upsert candle rows: {total_rows}, symbols={len(symbols)}, TV_success={tv_success}, TV_failed={tv_failed}"
+        logger.info("Chart history sync (%s): %s", sync_mode, run.message)
     except Exception as exc:
         logger.warning(
             "Chart history sync outer error (non-fatal, lanjut sync): %s",
