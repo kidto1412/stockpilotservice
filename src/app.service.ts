@@ -81,6 +81,13 @@ type CandlePoint = {
   v: number;
 };
 
+type ChartFetchResult = {
+  candles: CandlePoint[];
+  effectiveInterval: ChartInterval;
+  effectiveRange: ChartRange;
+  source: 'INTRADAY_1M' | 'DAILY_1D' | 'SNAPSHOT_FALLBACK';
+};
+
 @Injectable()
 export class AppService {
   constructor(private readonly prisma: PrismaService) {}
@@ -521,11 +528,12 @@ export class AppService {
     }
 
     const emaPeriods = this.parseEmaPeriods(query.emaPeriods);
-    const candles = await this.fetchCandlesForChart(
+    const chartResult = await this.fetchCandlesForChart(
       normalized,
       interval,
       range,
     );
+    const candles = chartResult.candles;
 
     if (!candles.length) {
       throw new BadRequestException(`Data candle ${normalized} tidak tersedia`);
@@ -561,9 +569,10 @@ export class AppService {
     return {
       symbol: normalized,
       timeframe: {
-        interval,
-        range,
+        interval: chartResult.effectiveInterval,
+        range: chartResult.effectiveRange,
       },
+      source: chartResult.source,
       indicatorConfig: {
         style: query.style ?? 'swing',
         rsiPeriod,
@@ -739,46 +748,94 @@ export class AppService {
     symbol: string,
     interval: ChartInterval,
     range: ChartRange,
-  ) {
+  ): Promise<ChartFetchResult> {
     const dbDailyCandles = await this.fetchDbDailyCandles(symbol, range);
 
     if (interval === '1w') {
-      return this.aggregateCandlePoints(dbDailyCandles, '1w');
+      return {
+        candles: this.aggregateCandlePoints(dbDailyCandles, '1w'),
+        effectiveInterval: '1w',
+        effectiveRange: range,
+        source: 'DAILY_1D',
+      };
     }
 
     if (interval === '1mo') {
-      return this.aggregateCandlePoints(dbDailyCandles, '1mo');
+      return {
+        candles: this.aggregateCandlePoints(dbDailyCandles, '1mo'),
+        effectiveInterval: '1mo',
+        effectiveRange: range,
+        source: 'DAILY_1D',
+      };
     }
 
     if (interval === '1d') {
-      return dbDailyCandles;
+      return {
+        candles: dbDailyCandles,
+        effectiveInterval: '1d',
+        effectiveRange: range,
+        source: 'DAILY_1D',
+      };
     }
+
+    const intradayRange = this.clampRangeForIntraday(range);
 
     const dbIntradayCandles = await this.fetchDbIntradayCandles(
       symbol,
       interval,
-      range,
+      intradayRange,
     );
 
-    const minIntradayCandles = this.getMinimumIntradayCandles(interval, range);
+    const minIntradayCandles = this.getMinimumIntradayCandles(
+      interval,
+      intradayRange,
+    );
     if (dbIntradayCandles.length >= minIntradayCandles) {
-      return dbIntradayCandles;
+      return {
+        candles: dbIntradayCandles,
+        effectiveInterval: interval,
+        effectiveRange: intradayRange,
+        source: 'INTRADAY_1M',
+      };
     }
 
     if (dbIntradayCandles.length > 0 && dbDailyCandles.length > 0) {
       // Intraday belum cukup untuk range yang diminta (umumnya karena histori 1M baru terkumpul sebagian).
       // Fallback ke daily agar chart tetap informatif dan tidak tampil hanya beberapa candle.
-      return dbDailyCandles;
+      return {
+        candles: dbDailyCandles,
+        effectiveInterval: '1d',
+        effectiveRange: range,
+        source: 'DAILY_1D',
+      };
     }
 
     // Fallback aman: tetap layani chart dari daily history agar tidak error ke client.
     if (dbDailyCandles.length > 0) {
-      return dbDailyCandles;
+      return {
+        candles: dbDailyCandles,
+        effectiveInterval: '1d',
+        effectiveRange: range,
+        source: 'DAILY_1D',
+      };
     }
 
-    return this.generateFallbackFromSnapshot(
-      symbol.toUpperCase().replace('.JK', '').trim(),
-    );
+    return {
+      candles: await this.generateFallbackFromSnapshot(
+        symbol.toUpperCase().replace('.JK', '').trim(),
+      ),
+      effectiveInterval: interval,
+      effectiveRange: range,
+      source: 'SNAPSHOT_FALLBACK',
+    };
+  }
+
+  private clampRangeForIntraday(range: ChartRange): ChartRange {
+    const days = this.getRangeDays(range);
+    if (days <= 5) return '5d';
+    if (days <= 31) return '1mo';
+    // Intraday DB window currently optimized for up to ~30 hari.
+    return '1mo';
   }
 
   private getMinimumIntradayCandles(
