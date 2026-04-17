@@ -17,7 +17,10 @@ from db import (
     log_sync_run,
 )
 from sources.tradingview_source import fetch_tradingview_snapshots
-from sources.tradingview_chart_source import fetch_tradingview_daily_candles
+from sources.tradingview_chart_source import (
+    fetch_tradingview_daily_candles,
+    fetch_tradingview_intraday_candles,
+)
 from sources.bisnis_source import fetch_bisnis_news
 
 
@@ -59,6 +62,14 @@ def run_once(
                 sync_mode=sync_mode,
                 batch_size=history_batch_size,
             )
+            if not full_sync:
+                _run_intraday_chart(
+                    conn,
+                    settings,
+                    synced_symbols,
+                    request_bars=720,
+                    batch_size=max(25, min(history_batch_size, 50)),
+                )
         _run_bisnis_news(conn, settings)
 
 
@@ -200,6 +211,85 @@ def _run_bisnis_news(conn, settings) -> None:
         run.status = "FAILED"
         run.message = str(exc)
         logger.exception("Bisnis.com news sync gagal")
+    finally:
+        run.finished_at = datetime.now(timezone.utc)
+        log_sync_run(conn, run)
+
+
+def _run_intraday_chart(
+    conn,
+    settings,
+    symbols: List[str],
+    request_bars: int = 720,
+    batch_size: int = 50,
+) -> None:
+    """Fetch chart intraday 1-menit untuk market-hour update (incremental)."""
+    started = datetime.now(timezone.utc)
+    run = SyncRun(source="CHART_INTRADAY", started_at=started, status="SUCCESS", message="OK")
+
+    try:
+        symbol_batches = _split_into_batches(symbols, batch_size)
+        total_rows = 0
+        total_batches = len(symbol_batches)
+        tv_success = 0
+        tv_failed = 0
+
+        for batch_num, batch_symbols in enumerate(symbol_batches, start=1):
+            try:
+                logger.info(
+                    "Intraday batch %d/%d: trying TradingView source...",
+                    batch_num,
+                    total_batches,
+                )
+                try:
+                    batch_rows = fetch_tradingview_intraday_candles(
+                        symbols=batch_symbols,
+                        timeout_sec=settings.request_timeout_sec,
+                        request_bars=request_bars,
+                    )
+                    if batch_rows:
+                        tv_success += 1
+                        batch_total = insert_price_history(conn, batch_rows)
+                        total_rows += batch_total
+                        logger.info(
+                            "Intraday batch %d/%d (TradingView): +%d rows, symbols=%d",
+                            batch_num,
+                            total_batches,
+                            batch_total,
+                            len(batch_symbols),
+                        )
+                    else:
+                        raise RuntimeError("TradingView intraday returned empty candles")
+
+                except Exception as tv_exc:
+                    tv_failed += 1
+                    logger.warning(
+                        "Intraday batch %d/%d: TradingView failed, skip this batch (reason: %s)",
+                        batch_num,
+                        total_batches,
+                        str(tv_exc)[:80],
+                    )
+
+                if batch_num < total_batches:
+                    time.sleep(0.5)
+
+            except Exception as batch_exc:
+                logger.warning(
+                    "Intraday batch %d/%d outer error (skip to next): %s",
+                    batch_num,
+                    total_batches,
+                    str(batch_exc)[:100],
+                )
+
+        run.message = f"INTRADAY_1M upsert candle rows: {total_rows}, symbols={len(symbols)}, TV_success={tv_success}, TV_failed={tv_failed}"
+        logger.info("Chart intraday sync: %s", run.message)
+    except Exception as exc:
+        logger.warning(
+            "Chart intraday sync outer error (non-fatal, lanjut sync): %s",
+            str(exc)[:150],
+        )
+        run.status = "SUCCESS"
+        run.message = f"PARTIAL (error: {str(exc)[:80]})"
     finally:
         run.finished_at = datetime.now(timezone.utc)
         log_sync_run(conn, run)

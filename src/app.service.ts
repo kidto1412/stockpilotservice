@@ -61,7 +61,16 @@ type ChartRange =
   | '5y'
   | '10y';
 
-type ChartInterval = '1m' | '5m' | '15m' | '30m' | '60m' | '1d';
+type ChartInterval =
+  | '1m'
+  | '5m'
+  | '15m'
+  | '30m'
+  | '60m'
+  | '4h'
+  | '1d'
+  | '1w'
+  | '1mo';
 
 type CandlePoint = {
   t: string;
@@ -732,6 +741,15 @@ export class AppService {
     range: ChartRange,
   ) {
     const dbDailyCandles = await this.fetchDbDailyCandles(symbol, range);
+
+    if (interval === '1w') {
+      return this.aggregateCandlePoints(dbDailyCandles, '1w');
+    }
+
+    if (interval === '1mo') {
+      return this.aggregateCandlePoints(dbDailyCandles, '1mo');
+    }
+
     if (interval === '1d') {
       return dbDailyCandles;
     }
@@ -862,14 +880,87 @@ export class AppService {
 
   private async fetchDbIntradayCandles(
     symbol: string,
-    interval: Exclude<ChartInterval, '1d'>,
+    interval: '1m' | '5m' | '15m' | '30m' | '60m' | '4h',
     range: ChartRange,
   ) {
     const normalizedSymbol = symbol.toUpperCase().replace('.JK', '').trim();
 
-    // Intraday pakai snapshot DB; untuk range besar batasi supaya query tetap ringan.
+    // Priority 1: intraday 1-menit dari market_price_history (hasil sync TradingView).
     const lookbackDays = Math.min(this.getRangeDays(range), 30);
     const fromDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+
+    const rawIntraday = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
+      SELECT
+        price_at,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        volume
+      FROM market_price_history
+      WHERE source = 'TRADINGVIEW'
+        AND symbol = ${normalizedSymbol}
+        AND timeframe = '1M'
+        AND price_at >= ${fromDate}
+      ORDER BY price_at ASC
+    `;
+
+    if (rawIntraday.length > 0) {
+      const bucketMs = this.intervalToMs(interval);
+      const buckets = new Map<
+        number,
+        { o: number; h: number; l: number; c: number; v: number }
+      >();
+
+      for (const row of rawIntraday) {
+        const close = row.close_price ?? 0;
+        if (close <= 0) continue;
+
+        const ts = row.price_at.getTime();
+        const bucketTs = Math.floor(ts / bucketMs) * bucketMs;
+        const open = row.open_price ?? close;
+        const high = row.high_price ?? close;
+        const low = row.low_price ?? close;
+        const volume =
+          typeof row.volume === 'bigint'
+            ? Number(row.volume)
+            : (row.volume ?? 0);
+
+        const existing = buckets.get(bucketTs);
+        if (!existing) {
+          buckets.set(bucketTs, {
+            o: open,
+            h: high,
+            l: low,
+            c: close,
+            v: volume,
+          });
+          continue;
+        }
+
+        existing.h = Math.max(existing.h, high);
+        existing.l = Math.min(existing.l, low);
+        existing.c = close;
+        existing.v += volume;
+      }
+
+      const result = Array.from(buckets.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([bucketTs, c]) => ({
+          t: new Date(bucketTs).toISOString(),
+          o: c.o,
+          h: c.h,
+          l: c.l,
+          c: c.c,
+          v: c.v,
+        }));
+
+      if (result.length > 0) {
+        return result;
+      }
+    }
+
+    // Priority 2: fallback snapshot DB; untuk range besar batasi supaya query tetap ringan.
 
     const rows = await this.prisma.$queryRaw<
       Array<{
@@ -924,7 +1015,7 @@ export class AppService {
       existing.h = Math.max(existing.h, close);
       existing.l = Math.min(existing.l, close);
       existing.c = close;
-      existing.v = Math.max(existing.v, volume);
+      existing.v += volume;
     }
 
     return Array.from(buckets.entries())
@@ -939,12 +1030,78 @@ export class AppService {
       }));
   }
 
-  private intervalToMs(interval: Exclude<ChartInterval, '1d'>) {
+  private intervalToMs(interval: '1m' | '5m' | '15m' | '30m' | '60m' | '4h') {
     if (interval === '1m') return 60_000;
     if (interval === '5m') return 5 * 60_000;
     if (interval === '15m') return 15 * 60_000;
     if (interval === '30m') return 30 * 60_000;
+    if (interval === '4h') return 4 * 60 * 60_000;
     return 60 * 60_000; // 60m
+  }
+
+  private aggregateCandlePoints(
+    candles: CandlePoint[],
+    interval: '1w' | '1mo',
+  ): CandlePoint[] {
+    if (!candles.length) {
+      return candles;
+    }
+
+    const buckets = new Map<
+      number,
+      { o: number; h: number; l: number; c: number; v: number }
+    >();
+
+    for (const candle of candles) {
+      const ts = new Date(candle.t).getTime();
+      if (!Number.isFinite(ts)) continue;
+
+      const bucketTs = this.bucketStartTs(ts, interval);
+      const existing = buckets.get(bucketTs);
+
+      if (!existing) {
+        buckets.set(bucketTs, {
+          o: candle.o,
+          h: candle.h,
+          l: candle.l,
+          c: candle.c,
+          v: candle.v,
+        });
+        continue;
+      }
+
+      existing.h = Math.max(existing.h, candle.h);
+      existing.l = Math.min(existing.l, candle.l);
+      existing.c = candle.c;
+      existing.v += candle.v;
+    }
+
+    return Array.from(buckets.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([bucketTs, c]) => ({
+        t: new Date(bucketTs).toISOString(),
+        o: c.o,
+        h: c.h,
+        l: c.l,
+        c: c.c,
+        v: c.v,
+      }));
+  }
+
+  private bucketStartTs(ts: number, interval: '1w' | '1mo'): number {
+    const d = new Date(ts);
+    const year = d.getUTCFullYear();
+    const month = d.getUTCMonth();
+    const day = d.getUTCDate();
+
+    if (interval === '1mo') {
+      return Date.UTC(year, month, 1, 0, 0, 0, 0);
+    }
+
+    // ISO-like week start on Monday.
+    const weekday = d.getUTCDay();
+    const shift = (weekday + 6) % 7;
+    return Date.UTC(year, month, day - shift, 0, 0, 0, 0);
   }
 
   private getRangeDays(range: ChartRange) {

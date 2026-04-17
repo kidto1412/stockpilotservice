@@ -156,8 +156,8 @@ export class TrainMlModelRequestDto {
 
 export class ChartIndicatorQueryDto {
   @IsOptional()
-  @IsIn(['1m', '5m', '15m', '30m', '60m', '1d'])
-  interval?: '1m' | '5m' | '15m' | '30m' | '60m' | '1d';
+  @IsIn(['1m', '5m', '15m', '30m', '60m', '4h', '1d', '1w', '1mo'])
+  interval?: '1m' | '5m' | '15m' | '30m' | '60m' | '4h' | '1d' | '1w' | '1mo';
 
   @IsOptional()
   @IsIn(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y'])

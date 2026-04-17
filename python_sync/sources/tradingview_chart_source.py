@@ -29,6 +29,37 @@ def fetch_tradingview_daily_candles(
     Ambil candle harian dari TradingView via WebSocket chart-session.
     Ini jalur yang dipakai web chart TradingView, bukan endpoint scanner/snapshot.
     """
+    return fetch_tradingview_candles(
+        symbols=symbols,
+        timeout_sec=timeout_sec,
+        request_bars=request_bars,
+        resolution="D",
+        timeframe="1D",
+    )
+
+
+def fetch_tradingview_intraday_candles(
+    symbols: list[str],
+    timeout_sec: int,
+    request_bars: int,
+) -> List[Dict[str, Any]]:
+    """Ambil candle intraday 1-menit dari TradingView untuk update chart market hour."""
+    return fetch_tradingview_candles(
+        symbols=symbols,
+        timeout_sec=timeout_sec,
+        request_bars=request_bars,
+        resolution="1",
+        timeframe="1M",
+    )
+
+
+def fetch_tradingview_candles(
+    symbols: list[str],
+    timeout_sec: int,
+    request_bars: int,
+    resolution: str,
+    timeframe: str,
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     normalized_symbols = _normalize_symbols(symbols)
     success_count = 0
@@ -36,54 +67,60 @@ def fetch_tradingview_daily_candles(
 
     for idx, symbol in enumerate(normalized_symbols, start=1):
         try:
-            candles = _fetch_symbol_daily_candles(
+            candles = _fetch_symbol_candles(
                 symbol=symbol,
                 timeout_sec=timeout_sec,
                 request_bars=request_bars,
+                resolution=resolution,
             )
 
             if candles:
-                rows.extend(_to_db_rows(symbol, candles))
+                rows.extend(_to_db_rows(symbol, candles, timeframe=timeframe))
                 success_count += 1
                 logger.info(
-                    "TradingView chart fetch %d/%d: symbol=%s, rows=%d",
+                    "TradingView chart fetch %d/%d: symbol=%s, rows=%d, tf=%s",
                     idx,
                     len(normalized_symbols),
                     symbol,
                     len(candles),
+                    timeframe,
                 )
             else:
                 failed_count += 1
                 logger.warning(
-                    "TradingView chart fetch %d/%d: symbol=%s, no rows available",
+                    "TradingView chart fetch %d/%d: symbol=%s, no rows available, tf=%s",
                     idx,
                     len(normalized_symbols),
                     symbol,
+                    timeframe,
                 )
         except Exception as exc:
             failed_count += 1
             logger.warning(
-                "TradingView chart skip symbol=%s reason=%s",
+                "TradingView chart skip symbol=%s reason=%s tf=%s",
                 symbol,
                 str(exc)[:120],
+                timeframe,
             )
 
         if idx < len(normalized_symbols):
             time.sleep(0.25)
 
     logger.info(
-        "TradingView chart fetch complete: success=%d, failed=%d, total_rows=%d",
+        "TradingView chart fetch complete: success=%d, failed=%d, total_rows=%d, tf=%s",
         success_count,
         failed_count,
         len(rows),
+        timeframe,
     )
     return rows
 
 
-def _fetch_symbol_daily_candles(
+def _fetch_symbol_candles(
     symbol: str,
     timeout_sec: int,
     request_bars: int,
+    resolution: str,
 ) -> List[Dict[str, Any]]:
     """
     Ambil candle harian dari WebSocket TradingView untuk satu simbol.
@@ -140,7 +177,7 @@ def _fetch_symbol_daily_candles(
         _send_tv_message(ws, "resolve_symbol", [chart_session, "symbol_1", resolve_payload])
 
         bars = max(60, request_bars)
-        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "D", bars])
+        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", resolution, bars])
         _send_tv_message(ws, "switch_timezone", [chart_session, "Etc/UTC"])
 
         raw = _read_ws_until_series(ws, timeout_sec=max(timeout_sec, _WS_TIMEOUT_SEC))
@@ -148,9 +185,10 @@ def _fetch_symbol_daily_candles(
         if candles:
             return candles
 
-        # Fallback beberapa market butuh format resolusi "1D"
+        # Fallback beberapa market butuh format resolusi alternatif.
         _send_tv_message(ws, "remove_series", [chart_session, "s1"])
-        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", "1D", bars])
+        fallback_resolution = "1D" if resolution == "D" else resolution
+        _send_tv_message(ws, "create_series", [chart_session, "s1", "s1", "symbol_1", fallback_resolution, bars])
         raw = _read_ws_until_series(ws, timeout_sec=max(timeout_sec, _WS_TIMEOUT_SEC))
         candles = _parse_ws_series(raw)
         if not candles:
@@ -163,7 +201,7 @@ def _fetch_symbol_daily_candles(
             pass
 
 
-def _to_db_rows(symbol: str, candles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _to_db_rows(symbol: str, candles: List[Dict[str, Any]], timeframe: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for candle in candles:
         close = candle.get("close")
@@ -177,7 +215,7 @@ def _to_db_rows(symbol: str, candles: List[Dict[str, Any]]) -> List[Dict[str, An
             {
                 "source": "TRADINGVIEW",
                 "symbol": symbol,
-                "timeframe": "1D",
+                "timeframe": timeframe,
                 "price_at": candle["price_at"],
                 "open_price": candle.get("open", close),
                 "high_price": candle.get("high", close),
