@@ -710,6 +710,39 @@ export class AppService {
       stochDPeriod,
     );
     const supportResistance = this.buildSupportResistanceLevels(sliced);
+    const supportLevels = supportResistance.supports;
+    const resistanceLevels = supportResistance.resistances;
+    const levels = [
+      ...supportLevels.map((price) => ({
+        type: 'support' as const,
+        price,
+      })),
+      ...resistanceLevels.map((price) => ({
+        type: 'resistance' as const,
+        price,
+      })),
+    ];
+
+    const zonePadding = Math.max(
+      0.001,
+      this.round((sliced[sliced.length - 1].c || 0) * 0.005),
+    );
+    const zones = {
+      support: supportResistance.nearestSupport
+        ? {
+            center: supportResistance.nearestSupport,
+            low: this.round(supportResistance.nearestSupport - zonePadding),
+            high: this.round(supportResistance.nearestSupport + zonePadding),
+          }
+        : null,
+      resistance: supportResistance.nearestResistance
+        ? {
+            center: supportResistance.nearestResistance,
+            low: this.round(supportResistance.nearestResistance - zonePadding),
+            high: this.round(supportResistance.nearestResistance + zonePadding),
+          }
+        : null,
+    };
 
     const emaMap: Record<string, Array<number | null>> = {};
     for (const period of emaPeriods) {
@@ -831,6 +864,10 @@ export class AppService {
         ),
       },
       supportResistance,
+      supportLevels,
+      resistanceLevels,
+      levels,
+      zones,
       recommendation: {
         selectedStyle,
         selectedStrategyKey,
