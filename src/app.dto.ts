@@ -63,6 +63,22 @@ export class StockAnalysisRequestDto {
   brokerNetBuyTop3Billion: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  stochK?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  stochD?: number;
+
+  @IsOptional()
+  @IsIn(['GOLDEN_CROSS', 'DEAD_CROSS', 'NONE'])
+  stochSignal?: 'GOLDEN_CROSS' | 'DEAD_CROSS' | 'NONE';
+
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(20)

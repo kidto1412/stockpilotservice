@@ -89,6 +89,9 @@ type HistoryDerivedMetrics = {
   ema20: number | null;
   ema50: number | null;
   volumeRatio: number | null;
+  stochK: number | null;
+  stochD: number | null;
+  stochSignal: 'GOLDEN_CROSS' | 'DEAD_CROSS' | 'NONE';
 };
 
 type ChartFetchResult = {
@@ -246,7 +249,8 @@ export class AppService {
       );
     }
 
-    const historyMetrics = await this.fetchHistoryDerivedMetrics(normalizedSymbol);
+    const historyMetrics =
+      await this.fetchHistoryDerivedMetrics(normalizedSymbol);
 
     return this.mapDbRowToMarketPayload(
       latest,
@@ -263,7 +267,10 @@ export class AppService {
     const closePrice = row.close_price ?? 0;
     const prevVolume = prevVolumeInput;
     const currentVolume = row.volume;
-    const fallbackVolumeRatio = this.computeDbVolumeRatio(currentVolume, prevVolume);
+    const fallbackVolumeRatio = this.computeDbVolumeRatio(
+      currentVolume,
+      prevVolume,
+    );
     const macdHistogram =
       row.macd !== null && row.macd_signal !== null
         ? row.macd - row.macd_signal
@@ -279,6 +286,9 @@ export class AppService {
     const effectiveEma50 = historyMetrics?.ema50 ?? row.ema50;
     const effectiveVolumeRatio =
       historyMetrics?.volumeRatio ?? fallbackVolumeRatio;
+    const effectiveStochK = historyMetrics?.stochK ?? null;
+    const effectiveStochD = historyMetrics?.stochD ?? null;
+    const effectiveStochSignal = historyMetrics?.stochSignal ?? 'NONE';
 
     const payload = {
       symbol: `${row.symbol}.JK`,
@@ -292,6 +302,11 @@ export class AppService {
         volumeRatio: this.roundNullableNumber(effectiveVolumeRatio),
         ema20: this.roundNullableNumber(effectiveEma20),
         ema50: this.roundNullableNumber(effectiveEma50),
+        stochastic: {
+          k: this.roundNullableNumber(effectiveStochK),
+          d: this.roundNullableNumber(effectiveStochD),
+          signal: effectiveStochSignal,
+        },
       },
       candles: {
         open: this.round(effectiveClosePrice),
@@ -325,6 +340,9 @@ export class AppService {
       ema50: payload.indicators.ema50 ?? payload.closePrice,
       foreignFlowBillion: 0,
       brokerNetBuyTop3Billion: 0,
+      stochK: payload.indicators.stochastic?.k ?? undefined,
+      stochD: payload.indicators.stochastic?.d ?? undefined,
+      stochSignal: payload.indicators.stochastic?.signal ?? 'NONE',
     };
 
     const recommendation = this.generateRecommendation(recommendationPayload);
@@ -345,6 +363,8 @@ export class AppService {
       WITH latest AS (
         SELECT
           price_at,
+          high_price,
+          low_price,
           close_price,
           volume
         FROM market_price_history
@@ -358,8 +378,8 @@ export class AppService {
       SELECT
         price_at,
         NULL::double precision AS open_price,
-        NULL::double precision AS high_price,
-        NULL::double precision AS low_price,
+        high_price,
+        low_price,
         close_price,
         volume
       FROM latest
@@ -378,10 +398,21 @@ export class AppService {
       return null;
     }
 
+    const highs = rows.map((row, idx) => row.high_price ?? closes[idx] ?? 0);
+    const lows = rows.map((row, idx) => row.low_price ?? closes[idx] ?? 0);
+
     const rsiSeries = this.buildRsiSeries(closes, 14);
     const macdSeries = this.buildMacdSeries(closes, 12, 26, 9);
     const ema20Series = this.buildEmaSeriesNullable(closes, 20);
     const ema50Series = this.buildEmaSeriesNullable(closes, 50);
+    const stochSeries = this.buildStochasticSeries(
+      highs,
+      lows,
+      closes,
+      10,
+      5,
+      5,
+    );
 
     const lastIdx = closes.length - 1;
     const prevIdx = closes.length - 2;
@@ -399,6 +430,17 @@ export class AppService {
         ? lastVolNum / prevVolNum
         : null;
 
+    const lastK = stochSeries.k[lastIdx];
+    const lastD = stochSeries.d[lastIdx];
+    const prevK = stochSeries.k[prevIdx];
+    const prevD = stochSeries.d[prevIdx];
+
+    let stochSignal: 'GOLDEN_CROSS' | 'DEAD_CROSS' | 'NONE' = 'NONE';
+    if (prevK !== null && prevD !== null && lastK !== null && lastD !== null) {
+      if (prevK <= prevD && lastK > lastD) stochSignal = 'GOLDEN_CROSS';
+      if (prevK >= prevD && lastK < lastD) stochSignal = 'DEAD_CROSS';
+    }
+
     return {
       closePrice: closes[lastIdx],
       lastUpdatedAt: rows[lastIdx].price_at.toISOString(),
@@ -407,6 +449,9 @@ export class AppService {
       ema20: ema20Series[lastIdx],
       ema50: ema50Series[lastIdx],
       volumeRatio,
+      stochK: stochSeries.k[lastIdx],
+      stochD: stochSeries.d[lastIdx],
+      stochSignal,
     };
   }
 
@@ -590,6 +635,9 @@ export class AppService {
       foreignFlowBillion: options?.foreignFlowBillion ?? 0,
       brokerNetBuyTop3Billion: options?.brokerNetBuyTop3Billion ?? 0,
       tradingViewIndicators: options?.tradingViewIndicators,
+      stochK: marketData.indicators.stochastic?.k ?? undefined,
+      stochD: marketData.indicators.stochastic?.d ?? undefined,
+      stochSignal: marketData.indicators.stochastic?.signal ?? 'NONE',
     };
 
     const recommendation = this.generateRecommendation(recommendationPayload);
@@ -661,6 +709,7 @@ export class AppService {
       stochKSmooth,
       stochDPeriod,
     );
+    const supportResistance = this.buildSupportResistanceLevels(sliced);
 
     const emaMap: Record<string, Array<number | null>> = {};
     for (const period of emaPeriods) {
@@ -730,6 +779,7 @@ export class AppService {
           ]),
         ),
       },
+      supportResistance,
     };
   }
 
@@ -1563,6 +1613,9 @@ export class AppService {
       foreignFlowBillion: payload.foreignFlowBillion,
       brokerNetBuyTop3Billion: payload.brokerNetBuyTop3Billion,
       tradingViewIndicators: payload.tradingViewIndicators,
+      stochK: marketData.indicators.stochastic?.k ?? undefined,
+      stochD: marketData.indicators.stochastic?.d ?? undefined,
+      stochSignal: marketData.indicators.stochastic?.signal ?? 'NONE',
     };
 
     const recommendation = this.generateRecommendation(recommendationPayload);
@@ -1587,7 +1640,12 @@ export class AppService {
     return {
       symbol: payload.symbol.toUpperCase(),
       generatedAt: new Date().toISOString(),
-      methodology: ['TECHNICAL_INDICATORS', 'LIQUIDITY_SWEEP', 'BID_OFFER'],
+      methodology: [
+        'TECHNICAL_INDICATORS',
+        'STOCHASTIC_CONFIRMATION',
+        'LIQUIDITY_SWEEP',
+        'BID_OFFER',
+      ],
       marketBias,
       scoring: {
         longScore,
@@ -1748,6 +1806,15 @@ export class AppService {
     if (payload.liquiditySweep === LiquiditySweepSignal.BULLISH) score += 2;
     if (payload.foreignFlowBillion > 0) score += 1;
     if (payload.brokerNetBuyTop3Billion > 0) score += 1;
+    if (payload.stochSignal === 'GOLDEN_CROSS') score += 2;
+    if (payload.stochSignal === 'DEAD_CROSS') score -= 2;
+    if (
+      payload.stochK !== undefined &&
+      payload.stochD !== undefined &&
+      payload.stochK > payload.stochD
+    ) {
+      score += 1;
+    }
 
     return score;
   }
@@ -1764,8 +1831,66 @@ export class AppService {
     if (payload.liquiditySweep === LiquiditySweepSignal.BEARISH) score += 2;
     if (payload.foreignFlowBillion < 0) score += 1;
     if (payload.brokerNetBuyTop3Billion < 0) score += 1;
+    if (payload.stochSignal === 'DEAD_CROSS') score += 2;
+    if (payload.stochSignal === 'GOLDEN_CROSS') score -= 2;
+    if (
+      payload.stochK !== undefined &&
+      payload.stochD !== undefined &&
+      payload.stochK < payload.stochD
+    ) {
+      score += 1;
+    }
 
     return score;
+  }
+
+  private buildSupportResistanceLevels(candles: CandlePoint[]) {
+    const sample = candles.slice(-Math.min(candles.length, 120));
+    if (sample.length < 10) {
+      return {
+        supports: [],
+        resistances: [],
+        nearestSupport: null,
+        nearestResistance: null,
+      };
+    }
+
+    const lows = sample.map((c) => c.l).sort((a, b) => a - b);
+    const highs = sample.map((c) => c.h).sort((a, b) => b - a);
+    const lastClose = sample[sample.length - 1].c;
+
+    const pick = (arr: number[], ratio: number) =>
+      arr[
+        Math.min(arr.length - 1, Math.max(0, Math.floor(arr.length * ratio)))
+      ];
+
+    const supportsRaw = [pick(lows, 0.1), pick(lows, 0.25), pick(lows, 0.4)]
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => a - b);
+
+    const resistancesRaw = [
+      pick(highs, 0.1),
+      pick(highs, 0.25),
+      pick(highs, 0.4),
+    ]
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => a - b);
+
+    const supports = [...new Set(supportsRaw.map((v) => this.round(v)))];
+    const resistances = [...new Set(resistancesRaw.map((v) => this.round(v)))];
+
+    const nearestSupport =
+      supports.filter((s) => s <= lastClose).sort((a, b) => b - a)[0] ?? null;
+    const nearestResistance =
+      resistances.filter((r) => r >= lastClose).sort((a, b) => a - b)[0] ??
+      null;
+
+    return {
+      supports,
+      resistances,
+      nearestSupport,
+      nearestResistance,
+    };
   }
 
   private getMarketBias(
