@@ -785,17 +785,19 @@ export class AppService {
     interval: Exclude<ChartInterval, '1d' | '1w' | '1mo'>,
     range: ChartRange,
   ) {
+    const intradayWindowDays = Math.min(this.getRangeDays(range), 30);
     const expected = {
-      '1m': this.getRangeDays(range) * 180,
-      '5m': this.getRangeDays(range) * 36,
-      '15m': this.getRangeDays(range) * 12,
-      '30m': this.getRangeDays(range) * 6,
-      '60m': this.getRangeDays(range) * 3,
-      '4h': this.getRangeDays(range),
+      '1m': intradayWindowDays * 180,
+      '5m': intradayWindowDays * 36,
+      '15m': intradayWindowDays * 12,
+      '30m': intradayWindowDays * 6,
+      '60m': intradayWindowDays * 3,
+      '4h': intradayWindowDays * 2,
     }[interval];
 
-    // Cukup konservatif: kalau sudah >= 20% dari estimasi, kita anggap usable.
-    return Math.max(30, Math.floor(expected * 0.2));
+    // Threshold dinamis: cukup untuk chart usable, tapi tidak terlalu ketat.
+    // Cap atas 180 agar simbol baru tetap bisa tampil intraday.
+    return Math.max(20, Math.min(180, Math.floor(expected * 0.1)));
   }
 
   private async fetchDbDailyCandles(symbol: string, range: ChartRange) {
