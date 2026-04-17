@@ -765,7 +765,8 @@ export class AppService {
       chartRecommendationPayload,
     );
     const selectedStrategyKey = this.mapChartStyleToStrategyKey(selectedStyle);
-    const selectedStrategy = chartRecommendation.strategies[selectedStrategyKey];
+    const selectedStrategy =
+      chartRecommendation.strategies[selectedStrategyKey];
 
     return {
       symbol: normalized,
@@ -881,12 +882,7 @@ export class AppService {
     const nowK = stochSeries.k[idx];
     const nowD = stochSeries.d[idx];
 
-    if (
-      prevK === null ||
-      prevD === null ||
-      nowK === null ||
-      nowD === null
-    ) {
+    if (prevK === null || prevD === null || nowK === null || nowD === null) {
       return 'NONE';
     }
 
