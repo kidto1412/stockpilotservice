@@ -760,8 +760,15 @@ export class AppService {
       range,
     );
 
-    if (dbIntradayCandles.length > 0) {
+    const minIntradayCandles = this.getMinimumIntradayCandles(interval, range);
+    if (dbIntradayCandles.length >= minIntradayCandles) {
       return dbIntradayCandles;
+    }
+
+    if (dbIntradayCandles.length > 0 && dbDailyCandles.length > 0) {
+      // Intraday belum cukup untuk range yang diminta (umumnya karena histori 1M baru terkumpul sebagian).
+      // Fallback ke daily agar chart tetap informatif dan tidak tampil hanya beberapa candle.
+      return dbDailyCandles;
     }
 
     // Fallback aman: tetap layani chart dari daily history agar tidak error ke client.
@@ -772,6 +779,23 @@ export class AppService {
     return this.generateFallbackFromSnapshot(
       symbol.toUpperCase().replace('.JK', '').trim(),
     );
+  }
+
+  private getMinimumIntradayCandles(
+    interval: Exclude<ChartInterval, '1d' | '1w' | '1mo'>,
+    range: ChartRange,
+  ) {
+    const expected = {
+      '1m': this.getRangeDays(range) * 180,
+      '5m': this.getRangeDays(range) * 36,
+      '15m': this.getRangeDays(range) * 12,
+      '30m': this.getRangeDays(range) * 6,
+      '60m': this.getRangeDays(range) * 3,
+      '4h': this.getRangeDays(range),
+    }[interval];
+
+    // Cukup konservatif: kalau sudah >= 20% dari estimasi, kita anggap usable.
+    return Math.max(30, Math.floor(expected * 0.2));
   }
 
   private async fetchDbDailyCandles(symbol: string, range: ChartRange) {
