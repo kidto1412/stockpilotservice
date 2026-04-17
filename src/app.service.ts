@@ -81,6 +81,16 @@ type CandlePoint = {
   v: number;
 };
 
+type HistoryDerivedMetrics = {
+  closePrice: number;
+  lastUpdatedAt: string;
+  rsi: number | null;
+  macdHistogram: number | null;
+  ema20: number | null;
+  ema50: number | null;
+  volumeRatio: number | null;
+};
+
 type ChartFetchResult = {
   candles: CandlePoint[];
   effectiveInterval: ChartInterval;
@@ -236,41 +246,59 @@ export class AppService {
       );
     }
 
-    return this.mapDbRowToMarketPayload(latest, rows[0].prev_volume ?? null);
+    const historyMetrics = await this.fetchHistoryDerivedMetrics(normalizedSymbol);
+
+    return this.mapDbRowToMarketPayload(
+      latest,
+      rows[0].prev_volume ?? null,
+      historyMetrics,
+    );
   }
 
   private mapDbRowToMarketPayload(
     row: DbMarketRow,
     prevVolumeInput: bigint | number | null,
+    historyMetrics?: HistoryDerivedMetrics | null,
   ) {
     const closePrice = row.close_price ?? 0;
     const prevVolume = prevVolumeInput;
     const currentVolume = row.volume;
-    const volumeRatio = this.computeDbVolumeRatio(currentVolume, prevVolume);
+    const fallbackVolumeRatio = this.computeDbVolumeRatio(currentVolume, prevVolume);
     const macdHistogram =
       row.macd !== null && row.macd_signal !== null
         ? row.macd - row.macd_signal
         : null;
 
+    const effectiveClosePrice = historyMetrics?.closePrice ?? closePrice;
+    const effectiveLastUpdatedAt =
+      historyMetrics?.lastUpdatedAt ?? row.snapshot_at.toISOString();
+    const effectiveRsi = historyMetrics?.rsi ?? row.rsi;
+    const effectiveMacdHistogram =
+      historyMetrics?.macdHistogram ?? macdHistogram;
+    const effectiveEma20 = historyMetrics?.ema20 ?? row.ema20;
+    const effectiveEma50 = historyMetrics?.ema50 ?? row.ema50;
+    const effectiveVolumeRatio =
+      historyMetrics?.volumeRatio ?? fallbackVolumeRatio;
+
     const payload = {
       symbol: `${row.symbol}.JK`,
-      closePrice: this.round(closePrice),
+      closePrice: this.round(effectiveClosePrice),
       livePrice: null,
       isRealTime: false,
-      lastUpdatedAt: row.snapshot_at.toISOString(),
+      lastUpdatedAt: effectiveLastUpdatedAt,
       indicators: {
-        rsi: this.roundNullableNumber(row.rsi),
-        macdHistogram: this.roundNullableNumber(macdHistogram),
-        volumeRatio: this.roundNullableNumber(volumeRatio),
-        ema20: this.roundNullableNumber(row.ema20),
-        ema50: this.roundNullableNumber(row.ema50),
+        rsi: this.roundNullableNumber(effectiveRsi),
+        macdHistogram: this.roundNullableNumber(effectiveMacdHistogram),
+        volumeRatio: this.roundNullableNumber(effectiveVolumeRatio),
+        ema20: this.roundNullableNumber(effectiveEma20),
+        ema50: this.roundNullableNumber(effectiveEma50),
       },
       candles: {
-        open: this.round(closePrice),
-        high: this.round(closePrice),
-        low: this.round(closePrice),
-        previousHigh: this.round(closePrice),
-        previousLow: this.round(closePrice),
+        open: this.round(effectiveClosePrice),
+        high: this.round(effectiveClosePrice),
+        low: this.round(effectiveClosePrice),
+        previousHigh: this.round(effectiveClosePrice),
+        previousLow: this.round(effectiveClosePrice),
       },
       source: {
         provider: 'DATABASE_SNAPSHOT',
@@ -278,7 +306,9 @@ export class AppService {
         source: row.source,
         cached: false,
         realTime: false,
-        note: 'Data diambil dari snapshot DB hasil sinkronisasi TradingView.',
+        note: historyMetrics
+          ? 'Harga+indikator diambil dari history 1D, snapshot dipakai sebagai fallback.'
+          : 'Data diambil dari snapshot DB hasil sinkronisasi TradingView.',
       },
     };
 
@@ -305,6 +335,78 @@ export class AppService {
       strategies: recommendation.strategies,
       tradingView: recommendation.tradingView,
       scoring: recommendation.scoring,
+    };
+  }
+
+  private async fetchHistoryDerivedMetrics(
+    normalizedSymbol: string,
+  ): Promise<HistoryDerivedMetrics | null> {
+    const rows = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
+      WITH latest AS (
+        SELECT
+          price_at,
+          close_price,
+          volume
+        FROM market_price_history
+        WHERE source = 'TRADINGVIEW'
+          AND symbol = ${normalizedSymbol}
+          AND timeframe = '1D'
+          AND close_price IS NOT NULL
+        ORDER BY price_at DESC
+        LIMIT 260
+      )
+      SELECT
+        price_at,
+        NULL::double precision AS open_price,
+        NULL::double precision AS high_price,
+        NULL::double precision AS low_price,
+        close_price,
+        volume
+      FROM latest
+      ORDER BY price_at ASC
+    `;
+
+    if (rows.length < 20) {
+      return null;
+    }
+
+    const closes = rows
+      .map((row) => row.close_price)
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+
+    if (closes.length < 20) {
+      return null;
+    }
+
+    const rsiSeries = this.buildRsiSeries(closes, 14);
+    const macdSeries = this.buildMacdSeries(closes, 12, 26, 9);
+    const ema20Series = this.buildEmaSeriesNullable(closes, 20);
+    const ema50Series = this.buildEmaSeriesNullable(closes, 50);
+
+    const lastIdx = closes.length - 1;
+    const prevIdx = closes.length - 2;
+
+    const lastVolume = rows[lastIdx]?.volume;
+    const prevVolume = rows[prevIdx]?.volume;
+
+    const toNumber = (value: bigint | number | null | undefined) =>
+      typeof value === 'bigint' ? Number(value) : (value ?? null);
+
+    const lastVolNum = toNumber(lastVolume);
+    const prevVolNum = toNumber(prevVolume);
+    const volumeRatio =
+      lastVolNum && prevVolNum && prevVolNum > 0
+        ? lastVolNum / prevVolNum
+        : null;
+
+    return {
+      closePrice: closes[lastIdx],
+      lastUpdatedAt: rows[lastIdx].price_at.toISOString(),
+      rsi: rsiSeries[lastIdx],
+      macdHistogram: macdSeries.histogram[lastIdx],
+      ema20: ema20Series[lastIdx],
+      ema50: ema50Series[lastIdx],
+      volumeRatio,
     };
   }
 
