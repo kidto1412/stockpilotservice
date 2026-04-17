@@ -717,6 +717,56 @@ export class AppService {
     }
 
     const lastIndex = sliced.length - 1;
+    const selectedStyle = query.style ?? 'swing';
+    const stochSignal = this.getStochasticCrossSignal(stochSeries, lastIndex);
+
+    const marketProbe = {
+      closePrice: sliced[lastIndex].c,
+      indicators: {
+        rsi: rsiSeries[lastIndex] ?? 50,
+        macdHistogram: macdSeries.histogram[lastIndex] ?? 0,
+        volumeRatio: this.computeChartVolumeRatio(sliced, lastIndex) ?? 1,
+        ema20: emaMap['20']?.[lastIndex] ?? sliced[lastIndex].c,
+        ema50: emaMap['50']?.[lastIndex] ?? sliced[lastIndex].c,
+        stochastic: {
+          k: stochSeries.k[lastIndex] ?? null,
+          d: stochSeries.d[lastIndex] ?? null,
+          signal: stochSignal,
+        },
+      },
+      candles: {
+        high: sliced[lastIndex].h,
+        low: sliced[lastIndex].l,
+        previousHigh:
+          lastIndex > 0 ? sliced[lastIndex - 1].h : sliced[lastIndex].h,
+        previousLow:
+          lastIndex > 0 ? sliced[lastIndex - 1].l : sliced[lastIndex].l,
+      },
+    };
+
+    const autoSignals = this.deriveRealtimeSignals(marketProbe);
+    const chartRecommendationPayload: StockAnalysisRequestDto = {
+      symbol: normalized,
+      closePrice: marketProbe.closePrice,
+      rsi: marketProbe.indicators.rsi,
+      macdHistogram: marketProbe.indicators.macdHistogram,
+      volumeRatio: marketProbe.indicators.volumeRatio,
+      liquiditySweep: autoSignals.liquiditySweep,
+      bidOfferImbalance: autoSignals.bidOfferImbalance,
+      ema20: marketProbe.indicators.ema20,
+      ema50: marketProbe.indicators.ema50,
+      foreignFlowBillion: 0,
+      brokerNetBuyTop3Billion: 0,
+      stochK: marketProbe.indicators.stochastic.k ?? undefined,
+      stochD: marketProbe.indicators.stochastic.d ?? undefined,
+      stochSignal: marketProbe.indicators.stochastic.signal,
+    };
+    const chartRecommendation = this.generateRecommendation(
+      chartRecommendationPayload,
+    );
+    const selectedStrategyKey = this.mapChartStyleToStrategyKey(selectedStyle);
+    const selectedStrategy = chartRecommendation.strategies[selectedStrategyKey];
+
     return {
       symbol: normalized,
       timeframe: {
@@ -780,7 +830,69 @@ export class AppService {
         ),
       },
       supportResistance,
+      recommendation: {
+        selectedStyle,
+        selectedStrategyKey,
+        marketBias: chartRecommendation.marketBias,
+        scoring: chartRecommendation.scoring,
+        signal: selectedStrategy.recommendation,
+        entry: selectedStrategy.entry,
+        takeProfit: selectedStrategy.takeProfit,
+        trailingStop: selectedStrategy.trailingStop,
+        stopLoss: selectedStrategy.stopLoss,
+        cutLoss: selectedStrategy.cutLoss,
+        note: selectedStrategy.note,
+        strategies: chartRecommendation.strategies,
+      },
+      comparison: {
+        engine: 'SAME_ENGINE_AS_/stock-analysis/recommendation',
+        note: 'Perbedaan hasil chart vs recommendation/auto biasanya karena input berbeda (foreign flow, broker flow, liquidity sweep, bid-offer).',
+        chartPayloadAssumptions: {
+          foreignFlowBillion: 0,
+          brokerNetBuyTop3Billion: 0,
+          liquiditySweep: autoSignals.liquiditySweep,
+          bidOfferImbalance: autoSignals.bidOfferImbalance,
+        },
+      },
     };
+  }
+
+  private mapChartStyleToStrategyKey(style: 'daily' | 'swing' | 'scalping') {
+    if (style === 'daily') return 'dayTrading' as const;
+    if (style === 'scalping') return 'scalping' as const;
+    return 'swingTrading' as const;
+  }
+
+  private computeChartVolumeRatio(candles: CandlePoint[], lastIndex: number) {
+    if (lastIndex <= 0) return null;
+    const prev = candles[lastIndex - 1]?.v ?? 0;
+    const curr = candles[lastIndex]?.v ?? 0;
+    if (prev <= 0) return null;
+    return curr / prev;
+  }
+
+  private getStochasticCrossSignal(
+    stochSeries: { k: Array<number | null>; d: Array<number | null> },
+    idx: number,
+  ): 'GOLDEN_CROSS' | 'DEAD_CROSS' | 'NONE' {
+    if (idx <= 0) return 'NONE';
+    const prevK = stochSeries.k[idx - 1];
+    const prevD = stochSeries.d[idx - 1];
+    const nowK = stochSeries.k[idx];
+    const nowD = stochSeries.d[idx];
+
+    if (
+      prevK === null ||
+      prevD === null ||
+      nowK === null ||
+      nowD === null
+    ) {
+      return 'NONE';
+    }
+
+    if (prevK <= prevD && nowK > nowD) return 'GOLDEN_CROSS';
+    if (prevK >= prevD && nowK < nowD) return 'DEAD_CROSS';
+    return 'NONE';
   }
 
   private deriveRealtimeSignals(marketData: any) {
