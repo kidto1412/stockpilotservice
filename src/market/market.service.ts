@@ -73,6 +73,37 @@ type RecommendationBaseRow = {
 export class MarketService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getEventDetail(id: number) {
+    const row = await this.prisma.$queryRaw<EventRow[]>(Prisma.sql`
+      SELECT
+        source,
+        event_type,
+        symbol,
+        title,
+        event_date,
+        reference_url,
+        external_id,
+        raw_payload,
+        created_at
+      FROM market_event_official
+      WHERE id = ${id}
+      LIMIT 1
+    `);
+    if (!row || row.length === 0) return null;
+    const event = row[0];
+    return {
+      source: event.source,
+      type: event.event_type,
+      symbol: event.symbol,
+      title: event.title,
+      eventDate: event.event_date,
+      referenceUrl: event.reference_url,
+      externalId: event.external_id,
+      rawPayload: event.raw_payload,
+      createdAt: event.created_at,
+    };
+  }
+
   async getTechnical(query: TechnicalQueryDto) {
     const where = this.buildTechnicalWhere(query);
 
@@ -371,7 +402,12 @@ export class MarketService {
   private normalizeSource(source?: string) {
     const normalized = (source ?? 'TRADINGVIEW').trim().toUpperCase();
 
-    if (!normalized || normalized === 'ALL' || normalized === 'ANY' || normalized === '*') {
+    if (
+      !normalized ||
+      normalized === 'ALL' ||
+      normalized === 'ANY' ||
+      normalized === '*'
+    ) {
       return null;
     }
 

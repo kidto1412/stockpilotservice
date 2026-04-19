@@ -1,4 +1,5 @@
-import { Controller, Get, Query } from '@nestjs/common';
+// method di luar class dihapus
+import { Controller, Get, Query, Param } from '@nestjs/common';
 import {
   EventQueryDto,
   RecommendationListQueryDto,
@@ -19,6 +20,11 @@ export class MarketController {
   @Get('events')
   getEvents(@Query() query: EventQueryDto) {
     return this.marketService.getEvents(query);
+  }
+
+  @Get('events/:id')
+  getEventDetail(@Param('id') id: string) {
+    return this.marketService.getEventDetail(Number(id));
   }
 
   @Get('sync-status')

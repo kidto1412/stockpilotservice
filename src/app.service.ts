@@ -204,7 +204,12 @@ export class AppService {
   private normalizeMarketSource(source?: string) {
     const normalized = (source ?? 'TRADINGVIEW').trim().toUpperCase();
 
-    if (!normalized || normalized === 'ALL' || normalized === 'ANY' || normalized === '*') {
+    if (
+      !normalized ||
+      normalized === 'ALL' ||
+      normalized === 'ANY' ||
+      normalized === '*'
+    ) {
       return null;
     }
 
