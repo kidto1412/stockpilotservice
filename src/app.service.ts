@@ -1281,9 +1281,18 @@ export class AppService {
   ) {
     const normalizedSymbol = symbol.toUpperCase().replace('.JK', '').trim();
 
-    // Priority 1: intraday 1-menit dari market_price_history (hasil sync TradingView).
+    // Priority 1: ambil data sesuai interval (huruf kecil, misal '1m', '5m', '15m')
     const lookbackDays = Math.min(this.getRangeDays(range), 30);
     const fromDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+    const tfMap: Record<string, string> = {
+      '1m': '1m',
+      '5m': '5m',
+      '15m': '15m',
+      '30m': '30m',
+      '60m': '60m',
+      '4h': '4h',
+    };
+    const tf = tfMap[interval] ?? interval;
 
     const rawIntraday = await this.prisma.$queryRaw<DbPriceHistoryRow[]>`
       SELECT
@@ -1296,64 +1305,25 @@ export class AppService {
       FROM market_price_history
       WHERE source = 'TRADINGVIEW'
         AND symbol = ${normalizedSymbol}
-        AND timeframe = '1M'
+        AND timeframe = ${tf}
         AND price_at >= ${fromDate}
       ORDER BY price_at ASC
     `;
 
     if (rawIntraday.length > 0) {
-      const bucketMs = this.intervalToMs(interval);
-      const buckets = new Map<
-        number,
-        { o: number; h: number; l: number; c: number; v: number }
-      >();
-
-      for (const row of rawIntraday) {
-        const close = row.close_price ?? 0;
-        if (close <= 0) continue;
-
-        const ts = row.price_at.getTime();
-        const bucketTs = Math.floor(ts / bucketMs) * bucketMs;
-        const open = row.open_price ?? close;
-        const high = row.high_price ?? close;
-        const low = row.low_price ?? close;
-        const volume =
-          typeof row.volume === 'bigint'
-            ? Number(row.volume)
-            : (row.volume ?? 0);
-
-        const existing = buckets.get(bucketTs);
-        if (!existing) {
-          buckets.set(bucketTs, {
-            o: open,
-            h: high,
-            l: low,
-            c: close,
-            v: volume,
-          });
-          continue;
-        }
-
-        existing.h = Math.max(existing.h, high);
-        existing.l = Math.min(existing.l, low);
-        existing.c = close;
-        existing.v += volume;
-      }
-
-      const result = Array.from(buckets.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([bucketTs, c]) => ({
-          t: new Date(bucketTs).toISOString(),
-          o: c.o,
-          h: c.h,
-          l: c.l,
-          c: c.c,
-          v: c.v,
+      return rawIntraday
+        .filter((row) => row.close_price !== null)
+        .map((row) => ({
+          t: row.price_at.toISOString(),
+          o: row.open_price ?? row.close_price ?? 0,
+          h: row.high_price ?? row.close_price ?? 0,
+          l: row.low_price ?? row.close_price ?? 0,
+          c: row.close_price ?? 0,
+          v:
+            typeof row.volume === 'bigint'
+              ? Number(row.volume)
+              : (row.volume ?? 0),
         }));
-
-      if (result.length > 0) {
-        return result;
-      }
     }
 
     // Priority 2: fallback snapshot DB; untuk range besar batasi supaya query tetap ringan.
