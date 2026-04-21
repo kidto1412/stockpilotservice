@@ -104,9 +104,67 @@ export class MarketService {
     };
   }
 
-  async getTechnical(query: TechnicalQueryDto) {
-    const where = this.buildTechnicalWhere(query);
+  async getTechnical(query: TechnicalQueryDto & { timeframe?: string }) {
+    // Jika ada parameter timeframe, ambil dari market_price_history
+    if (query.timeframe) {
+      const conditions: Prisma.Sql[] = [];
+      if (query.symbol) {
+        conditions.push(Prisma.sql`symbol = ${query.symbol.toUpperCase()}`);
+      }
+      conditions.push(Prisma.sql`timeframe = ${query.timeframe}`);
+      if (query.source) {
+        conditions.push(Prisma.sql`source = ${query.source.toUpperCase()}`);
+      }
+      if (query.from) {
+        conditions.push(Prisma.sql`price_at >= ${new Date(query.from)}`);
+      }
+      if (query.to) {
+        conditions.push(Prisma.sql`price_at <= ${new Date(query.to)}`);
+      }
+      const whereClause =
+        conditions.length > 0
+          ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+          : Prisma.sql``;
 
+      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT
+          source,
+          symbol,
+          timeframe,
+          price_at,
+          open_price,
+          high_price,
+          low_price,
+          close_price,
+          volume,
+          raw_payload,
+          created_at
+        FROM market_price_history
+        ${whereClause}
+        ORDER BY price_at DESC
+        LIMIT ${query.limit ?? 100}
+      `);
+
+      return rows.map((row) => ({
+        source: row.source,
+        symbol: row.symbol,
+        timeframe: row.timeframe,
+        priceAt: row.price_at,
+        open: row.open_price,
+        high: row.high_price,
+        low: row.low_price,
+        close: row.close_price,
+        volume:
+          typeof row.volume === 'bigint'
+            ? Number(row.volume)
+            : (row.volume ?? null),
+        rawPayload: row.raw_payload,
+        createdAt: row.created_at,
+      }));
+    }
+
+    // Default: ambil dari market_technical_snapshot
+    const where = this.buildTechnicalWhere(query);
     const rows = await this.prisma.$queryRaw<TechnicalRow[]>(Prisma.sql`
       SELECT
         source,
