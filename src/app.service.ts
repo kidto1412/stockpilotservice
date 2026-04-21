@@ -1311,19 +1311,18 @@ export class AppService {
     `;
 
     if (rawIntraday.length > 0) {
-      return rawIntraday
-        .filter((row) => row.close_price !== null)
-        .map((row) => ({
-          t: row.price_at.toISOString(),
-          o: row.open_price ?? row.close_price ?? 0,
-          h: row.high_price ?? row.close_price ?? 0,
-          l: row.low_price ?? row.close_price ?? 0,
-          c: row.close_price ?? 0,
-          v:
-            typeof row.volume === 'bigint'
-              ? Number(row.volume)
-              : (row.volume ?? 0),
-        }));
+      // Ambil semua candle, walau close_price null/0, agar gap bisa terdeteksi di frontend
+      return rawIntraday.map((row) => ({
+        t: row.price_at.toISOString(),
+        o: row.open_price ?? row.close_price ?? 0,
+        h: row.high_price ?? row.close_price ?? 0,
+        l: row.low_price ?? row.close_price ?? 0,
+        c: row.close_price ?? 0,
+        v:
+          typeof row.volume === 'bigint'
+            ? Number(row.volume)
+            : (row.volume ?? 0),
+      }));
     }
 
     // Priority 2: fallback snapshot DB; untuk range besar batasi supaya query tetap ringan.
@@ -1359,8 +1358,7 @@ export class AppService {
 
     for (const row of rows) {
       const close = row.close_price ?? 0;
-      if (close <= 0) continue;
-
+      // Jangan skip candle walau close 0/null, agar gap bisa terdeteksi
       const ts = row.snapshot_at.getTime();
       const bucketTs = Math.floor(ts / bucketMs) * bucketMs;
       const volume =
