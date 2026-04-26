@@ -24,13 +24,12 @@ TIMEFRAME_CONFIG = {
     "3M": "3",
     "5M": "5",
     "30M": "30",
+    "45M": "45",
+    "1H": "60",
     "2H": "120",
-    "6H": "360",
-    "8H": "480",
-    "12H": "720",
     "1D": "D",
-    "3D": "3D",
     "1W": "W",
+    "1MO": "M",
 }
 
 def fetch_tradingview_all_timeframes(
