@@ -19,6 +19,65 @@ _WS_URL = "wss://data.tradingview.com/socket.io/websocket"
 _WS_TIMEOUT_SEC = 20
 _RE_FRAME = re.compile(r"~m~(\d+)~m~")
 
+TIMEFRAME_CONFIG = {
+    "1M": "1",
+    "3M": "3",
+    "5M": "5",
+    "30M": "30",
+    "2H": "120",
+    "6H": "360",
+    "8H": "480",
+    "12H": "720",
+    "1D": "D",
+    "3D": "3D",
+    "1W": "W",
+}
+
+def fetch_tradingview_all_timeframes(
+    symbols: list[str],
+    timeout_sec: int,
+    request_bars: int,
+) -> List[Dict[str, Any]]:
+    timeframes = [
+        "1M", "3M", "5M", "30M",
+        "2H", "6H", "8H", "12H",
+        "1D", "3D", "1W",
+    ]
+
+    return fetch_tradingview_multi_timeframe_candles(
+        symbols=symbols,
+        timeout_sec=timeout_sec,
+        request_bars=request_bars,
+        timeframes=timeframes,
+    )
+
+def fetch_tradingview_multi_timeframe_candles(
+    symbols: list[str],
+    timeout_sec: int,
+    request_bars: int,
+    timeframes: list[str],
+) -> List[Dict[str, Any]]:
+    all_rows: List[Dict[str, Any]] = []
+
+    for tf in timeframes:
+        resolution = TIMEFRAME_CONFIG.get(tf)
+        if not resolution:
+            logger.warning("Skip unsupported timeframe: %s", tf)
+            continue
+
+        logger.info("Fetching timeframe: %s", tf)
+
+        rows = fetch_tradingview_candles(
+            symbols=symbols,
+            timeout_sec=timeout_sec,
+            request_bars=request_bars,
+            resolution=resolution,
+            timeframe=tf,
+        )
+
+        all_rows.extend(rows)
+
+    return all_rows
 
 def fetch_tradingview_daily_candles(
     symbols: list[str],

@@ -23,6 +23,7 @@ from sources.tradingview_chart_source import (
 )
 from sources.bisnis_source import fetch_bisnis_news
 
+from sources.tradingview_chart_source import fetch_tradingview_all_timeframes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,7 +130,7 @@ def _run_daily_chart(
                     total_batches,
                 )
                 try:
-                    batch_rows = fetch_tradingview_daily_candles(
+                    batch_rows = fetch_tradingview_all_timeframes(
                         symbols=batch_symbols,
                         timeout_sec=settings.request_timeout_sec,
                         request_bars=request_bars,
