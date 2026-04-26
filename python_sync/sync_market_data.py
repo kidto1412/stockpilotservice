@@ -39,39 +39,32 @@ def _run_multi_timeframe_chart(
                 logger.info(
                     f"Multi-TF batch {batch_num}/{total_batches}: timeframe={tf_name} ..."
                 )
-                try:
-                    batch_rows = fetch_tradingview_candles(
-                        symbols=batch_symbols,
-                        timeout_sec=settings.request_timeout_sec,
-                        request_bars=request_bars,
-                        resolution=tf_res,
-                        timeframe=tf_name,
+                batch_rows = fetch_tradingview_candles(
+                    symbols=batch_symbols,
+                    timeout_sec=settings.request_timeout_sec,
+                    request_bars=request_bars,
+                    resolution=tf_res,
+                    timeframe=tf_name,
+                )
+                if batch_rows:
+                    tf_success += 1
+                    batch_total = insert_price_history(conn, batch_rows)
+                    total_rows += batch_total
+                    logger.info(
+                        f"Multi-TF batch {batch_num}/{total_batches} ({tf_name}): +{batch_total} rows, symbols={len(batch_symbols)}"
                     )
-                    if batch_rows:
-                        tf_success += 1
-                        batch_total = insert_price_history(conn, batch_rows)
-                        total_rows += batch_total
-                        logger.info(
-                            f"Multi-TF batch {batch_num}/{total_batches} ({tf_name}): +{batch_total} rows, symbols={len(batch_symbols)}"
-                        )
-                    else:
-                        raise RuntimeError(f"TradingView returned empty candles for {tf_name}")
-                except Exception as tf_exc:
-                    tf_failed += 1
-                    logger.warning(
-                        f"Multi-TF batch {batch_num}/{total_batches}: TradingView failed, skip this batch (reason: {str(tf_exc)[:80]})"
-                    )
-                if batch_num < total_batches:
-
-                        if batch_num < total_batches:
-                            time.sleep(0.5)
-                    except Exception as batch_exc:
-                        logger.warning(
-                            f"Multi-TF batch {batch_num}/{total_batches} outer error (skip to next): {str(batch_exc)[:100]}"
-                        )
-                logger.info(f"Multi-TF {tf_name} sync: success={tf_success}, failed={tf_failed}")
-            logger.info(f"Multi-TF sync selesai: total_rows={total_rows}, symbols={len(symbols)}")
-        _run_bisnis_news(conn, settings)
+                else:
+                    raise RuntimeError(f"TradingView returned empty candles for {tf_name}")
+            except Exception as tf_exc:
+                tf_failed += 1
+                logger.warning(
+                    f"Multi-TF batch {batch_num}/{total_batches}: TradingView failed, skip this batch (reason: {str(tf_exc)[:80]})"
+                )
+            if batch_num < total_batches:
+                time.sleep(0.5)
+        logger.info(f"Multi-TF {tf_name} sync: success={tf_success}, failed={tf_failed}")
+    logger.info(f"Multi-TF sync selesai: total_rows={total_rows}, symbols={len(symbols)}")
+    _run_bisnis_news(conn, settings)
 
 
 def _run_tradingview(conn, settings, symbols: List[str]) -> List[str]:
