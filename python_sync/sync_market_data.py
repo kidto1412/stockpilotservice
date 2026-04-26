@@ -1,38 +1,77 @@
 from __future__ import annotations
 
-import argparse
-import logging
-import time
-from datetime import datetime, timezone
-from typing import List
+def _run_multi_timeframe_chart(
+    conn,
+    settings,
+    symbols: List[str],
+    request_bars: int,
+    sync_mode: str,
+    batch_size: int = 50,
+):
+    """
+    Fetch dan simpan chart data multi-timeframe dari TradingView.
+    Timeframe: 1M, 1W, 5M, 3M, 3D, 12H, 8H, 6H, 2H, 30M, 1D
+    """
+    timeframes = [
+        ("1", "1M"),
+        ("5", "5M"),
+        ("15", "15M"),
+        ("30", "30M"),
+        ("60", "1H"),
+        ("120", "2H"),
+        ("360", "6H"),
+        ("480", "8H"),
+        ("720", "12H"),
+        ("3D", "3D"),
+        ("1W", "1W"),
+        ("1M", "1Mo"),
+        ("1D", "1D"),
+    ]
+    symbol_batches = _split_into_batches(symbols, batch_size)
+    total_rows = 0
+    total_batches = len(symbol_batches)
+    for tf_res, tf_name in timeframes:
+        tf_success = 0
+        tf_failed = 0
+        logger.info(f"Sync multi-timeframe: {tf_name} ...")
+        for batch_num, batch_symbols in enumerate(symbol_batches, start=1):
+            try:
+                logger.info(
+                    f"Multi-TF batch {batch_num}/{total_batches}: timeframe={tf_name} ..."
+                )
+                try:
+                    batch_rows = fetch_tradingview_candles(
+                        symbols=batch_symbols,
+                        timeout_sec=settings.request_timeout_sec,
+                        request_bars=request_bars,
+                        resolution=tf_res,
+                        timeframe=tf_name,
+                    )
+                    if batch_rows:
+                        tf_success += 1
+                        batch_total = insert_price_history(conn, batch_rows)
+                        total_rows += batch_total
+                        logger.info(
+                            f"Multi-TF batch {batch_num}/{total_batches} ({tf_name}): +{batch_total} rows, symbols={len(batch_symbols)}"
+                        )
+                    else:
+                        raise RuntimeError(f"TradingView returned empty candles for {tf_name}")
+                except Exception as tf_exc:
+                    tf_failed += 1
+                    logger.warning(
+                        f"Multi-TF batch {batch_num}/{total_batches}: TradingView failed, skip this batch (reason: {str(tf_exc)[:80]})"
+                    )
+                if batch_num < total_batches:
+                    time.sleep(0.5)
+            except Exception as batch_exc:
+                logger.warning(
+                    f"Multi-TF batch {batch_num}/{total_batches} outer error (skip to next): {str(batch_exc)[:100]}"
+                )
+        logger.info(f"Multi-TF {tf_name} sync: success={tf_success}, failed={tf_failed}")
+    logger.info(f"Multi-TF sync selesai: total_rows={total_rows}, symbols={len(symbols)}")
 
-from config import get_settings, parse_symbols
-from db import (
-    SyncRun,
-    connect,
-    ensure_schema,
-    insert_official_events,
-    insert_price_history,
-    insert_technical_snapshots,
-    log_sync_run,
-)
-from sources.tradingview_source import fetch_tradingview_snapshots
-from sources.tradingview_chart_source import (
-    fetch_tradingview_daily_candles,
-    fetch_tradingview_intraday_candles,
-    fetch_tradingview_candles,
-)
-from sources.bisnis_source import fetch_bisnis_news
 
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-logger = logging.getLogger("market-sync")
-
-
-def run_once(
+    settings = get_settings()
     symbols: List[str],
     full_sync: bool = False,
     history_years: int = 10,
@@ -40,6 +79,38 @@ def run_once(
     history_batch_size: int = 50,
 ) -> None:
     settings = get_settings()
+    with connect(settings.database_url) as conn:
+        ensure_schema(conn)
+
+        if full_sync:
+            logger.info(
+                "--full-sync scan semua saham IDX, snapshot teknikal + news terbaru."
+            )
+        synced_symbols = _run_tradingview(conn, settings, symbols)
+        if include_history and synced_symbols:
+            request_bars = (
+                max(60, history_years * 390)
+                if full_sync
+                else max(120, settings.history_incremental_days * 4)
+            )
+            sync_mode = "FULL_BACKFILL" if full_sync else "INCREMENTAL"
+            _run_multi_timeframe_chart(
+                conn,
+                settings,
+                synced_symbols,
+                request_bars=request_bars,
+                sync_mode=sync_mode,
+                batch_size=history_batch_size,
+            )
+            if not full_sync:
+                _run_intraday_chart(
+                    conn,
+                    settings,
+                    synced_symbols,
+                    request_bars=720,
+                    batch_size=max(25, min(history_batch_size, 50)),
+                )
+        _run_bisnis_news(conn, settings)
     with connect(settings.database_url) as conn:
         ensure_schema(conn)
 
